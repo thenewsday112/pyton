@@ -1,13 +1,13 @@
-name: Scraping dan Export
+name: Scraping dan Export Otomatis
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Tombol untuk menjalankan manual
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write 
+      contents: write # Izin agar bot bisa menyimpan file baru ke repo
 
     steps:
       - name: Checkout kode
@@ -23,19 +23,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           
-      # 1. JALANKAN SCRAPING DULU
+      # 1. JALANKAN SCRAPING (Mengisi Database)
       - name: Jalankan Scraping
-        run: python deepseekposisi1.py 
+        run: python deepseekposisi1.py
         
-      # 2. BARU JALANKAN EXPORT HTML
+      # 2. JALANKAN EXPORT (Membuat File HTML dari Database)
       - name: Jalankan Export HTML
         run: python exportgeminictr.py
         
-      # 3. SIMPAN SEMUA HASIL (Database & HTML) KE GITHUB
+      # 3. SIMPAN HASILNYA KE GITHUB
       - name: Commit dan Push Perubahan
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add .
-          git diff --staged --quiet || git commit -m "Update otomatis: Database dan HTML"
+          git diff --staged --quiet || git commit -m "Update otomatis dari GitHub Actions"
           git push
