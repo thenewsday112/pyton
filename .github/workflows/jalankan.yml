@@ -1,0 +1,17 @@
+name: Jalankan Script Python
+
+on:
+  workflow_dispatch: # Ini agar Anda bisa mengklik tombol "Run" manual untuk tes
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout kode
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Jalankan Script
+        run: python namascriptanda.py # GANTI dengan nama file python Anda
