@@ -9,9 +9,9 @@ import json
 # CONFIG
 # ============================================================
 BASE_DIR = Path(__file__).parent.resolve()
-DB_PATH = BASE_DIR / "database_5menit" / "database.sqlite" 
-OUTPUT_DIR = BASE_DIR / "output" 
-BASE_URL = "https://thenewsday112.github.io/1jamwow"
+DB_PATH = BASE_DIR / "database_5menit" / "database.sqlite"
+OUTPUT_DIR = BASE_DIR / "output"
+BASE_URL = "https://thenewsday112.github.io/pyton"   # ✅ FIX: repo name
 
 ARTICLES_PER_PAGE = 20
 SITE_NAME = "News Portal Indonesia"
@@ -32,12 +32,12 @@ ADSTERRA_CODE = """
 """
 
 # ============================================================
-# KAMUS KATEGORI (INDONESIA & INGGRIS)
+# KAMUS KATEGORI
 # ============================================================
 CATEGORIES = [
-    "technology", "business", "sports", "entertainment", 
-    "health", "science", "politics", "world", 
-    "finance", "travel", "food", "automotive", 
+    "technology", "business", "sports", "entertainment",
+    "health", "science", "politics", "world",
+    "finance", "travel", "food", "automotive",
     "education", "lifestyle", "other"
 ]
 
@@ -59,7 +59,7 @@ KEYWORDS = {
 }
 
 # ============================================================
-# HELPER FUNCTIONS
+# HELPER
 # ============================================================
 def esc(text):
     if not text:
@@ -75,12 +75,41 @@ def format_date(date_str):
     except Exception:
         return str(date_str)[:10]
 
+def iso_date(date_str):
+    """✅ FIX: paksa ISO 8601 untuk schema.org"""
+    if not date_str:
+        return datetime.now().isoformat()
+    try:
+        return datetime.fromisoformat(str(date_str).replace('Z', '+00:00')).isoformat()
+    except Exception:
+        return datetime.now().isoformat()
+
 def detect_kategori(text):
     lower = text.lower()
     for cat, kws in KEYWORDS.items():
         if any(re.search(r'\b' + re.escape(kw) + r'\b', lower) for kw in kws):
             return cat
     return "other"
+
+def ensure_database():
+    """✅ FIX: buat DB kosong jika tidak ada, TIDAK exit(1)"""
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if DB_PATH.exists():
+        return
+    print(f"⚠️ WARNING: Database tidak ditemukan di {DB_PATH}")
+    print("   Membuat database kosong agar workflow tetap jalan...")
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS artikel (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            link TEXT UNIQUE, title TEXT, content TEXT, gambar TEXT,
+            kategori TEXT DEFAULT 'other',
+            tanggal_publish TEXT, tanggal_update TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+    print("   ✅ Database kosong dibuat.\n")
 
 def fix_database():
     print("[STEP 1] Checking database structure...")
@@ -140,7 +169,7 @@ def fix_database():
 # HTML TEMPLATE
 # ============================================================
 HTML_HEAD = """<!DOCTYPE html>
-<html lang="en">
+<html lang="id">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -148,6 +177,11 @@ HTML_HEAD = """<!DOCTYPE html>
 <title>{title}</title>
 <meta name="description" content="{desc}">
 <link rel="canonical" href="{canonical}">
+<meta property="og:title" content="{title}">
+<meta property="og:description" content="{desc}">
+<meta property="og:type" content="website">
+<meta property="og:url" content="{canonical}">
+<meta name="twitter:card" content="summary_large_image">
 <style>
 body{{font-family:'Segoe UI',system-ui,sans-serif;background:#f4f6f8;margin:0;padding:20px;color:#333;line-height:1.6}}
 .container{{max-width:1000px;margin:0 auto}}
@@ -183,39 +217,40 @@ def render_nav(active_cat, available_categories):
     html = '<nav>'
     a_all = ' class="active"' if active_cat == "" else ''
     html += f'<a href="index.html"{a_all}>🏠 All News</a>'
-    
     for cat in CATEGORIES:
         if cat in available_categories and cat != "other":
             a_cat = ' class="active"' if active_cat == cat else ''
             html += f'<a href="{cat}.html"{a_cat}>📰 {cat.title()}</a>'
-            
     if "other" in available_categories:
         a_other = ' class="active"' if active_cat == "other" else ''
         html += f'<a href="other.html"{a_other}>📰 Other</a>'
-        
     return html + '</nav>'
 
 
 def render_card(row, filename="index.html"):
-    title = row["title"] if "title" in row.keys() else (row["judul"] if "judul" in row.keys() else "No Title")
-    content = row["content"] if "content" in row.keys() else (row["konten"] if "konten" in row.keys() else "")
-    gambar = row["gambar"] if "gambar" in row.keys() else ""
-    kategori = row["kategori"] if "kategori" in row.keys() else "other"
-    link = row["link"] if "link" in row.keys() else "#"
-    tanggal = row["tanggal_publish"] if "tanggal_publish" in row.keys() else ""
-    aid = row["id"] if "id" in row.keys() else ""
+    """✅ FIX: akses kolom aman, content di-escape, iklan tidak per kartu"""
+    keys = row.keys()
+    title    = row["title"]    if "title"    in keys else "No Title"
+    content  = row["content"]  if "content"  in keys else ""
+    gambar   = row["gambar"]   if "gambar"   in keys else ""
+    kategori = row["kategori"] if "kategori" in keys else "other"
+    link     = row["link"]     if "link"     in keys else "#"
+    tanggal  = row["tanggal_publish"] if "tanggal_publish" in keys else ""
+    aid      = row["id"]       if "id"       in keys else ""
 
     img = f'<img src="{esc(gambar)}" alt="{esc(title)}" loading="lazy">' if gambar else ""
     cat_label = kategori.title() if kategori else "Other"
 
-    # Schema markup NewsArticle per kartu agar Google membaca tiap berita secara mandiri
+    # ✅ Content di-escape agar aman dari XSS & layout rusak
+    content_html = f"<p>{esc(content)}</p>" if content else ""
+
     schema_json = json.dumps({
         "@context": "https://schema.org",
         "@type": "NewsArticle",
         "headline": title,
         "image": [gambar] if gambar else [],
-        "datePublished": tanggal or datetime.now().isoformat(),
-        "dateModified": tanggal or datetime.now().isoformat(),
+        "datePublished": iso_date(tanggal),
+        "dateModified": iso_date(tanggal),
         "mainEntityOfPage": f"{BASE_URL}/{filename}#artikel-{aid}"
     }, ensure_ascii=False)
 
@@ -224,26 +259,45 @@ def render_card(row, filename="index.html"):
     <script type="application/ld+json">{schema_json}</script>
     <h2>{esc(title)}</h2>
     <div class="article-meta">
-        📅 {format_date(tanggal)} &nbsp;|&nbsp; Category: <strong>{esc(cat_label)}</strong> &nbsp;|&nbsp; 
-        <a href="{esc(link)}" target="_blank" rel="nofollow">Read Source &rarr;</a>
+        📅 {format_date(tanggal)} &nbsp;|&nbsp; Category: <strong>{esc(cat_label)}</strong> &nbsp;|&nbsp;
+        <a href="{esc(link)}" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
     </div>
-    <div class="article-body">
-        {img}
-        {content or ""}
-        {ADSTERRA_CODE}
-    </div>
+    <div class="article-body">{img}{content_html}</div>
 </article>"""
 
 
 def render_page(title, desc, canonical, rows, active_cat, available_categories, page_nav="", filename="index.html"):
-    cards = "".join(render_card(r, filename) for r in rows)
+    # ✅ FIX: iklan disisipkan setiap 5 artikel, bukan tiap kartu
+    cards = ""
+    for i, r in enumerate(rows):
+        cards += render_card(r, filename)
+        if (i + 1) % 5 == 0:
+            cards += ADSTERRA_CODE
+
     head = HTML_HEAD.format(
-        title=esc(title), desc=esc(desc), canonical=esc(canonical), 
+        title=esc(title), desc=esc(desc), canonical=esc(canonical),
         site=esc(SITE_NAME), nav=render_nav(active_cat, available_categories)
     )
     body = f'<h1 style="color:#1e293b;border-left:5px solid #2563eb;padding-left:15px;margin-bottom:30px;">{esc(title)}</h1>'
     body += cards + page_nav
     return head + body + HTML_FOOT.format(year=datetime.now().year, site=esc(SITE_NAME))
+
+
+def build_pagination(current, total, base_name):
+    """✅ FIX: helper pagination untuk index & kategori"""
+    if total <= 1:
+        return ""
+    nav = '<div class="pagination">'
+    for j in range(1, total + 1):
+        if base_name == "index":
+            href = "index.html" if j == 1 else f"page{j}.html"
+        else:
+            href = f"{base_name}.html" if j == 1 else f"{base_name}-page{j}.html"
+        a = ' class="active"' if j == current else ''
+        nav += f'<a href="{href}"{a}>{j}</a>'
+    nav += '</div>'
+    return nav
+
 
 # ============================================================
 # EXPORT LOGIC
@@ -257,92 +311,86 @@ def export_all():
     c = conn.cursor()
 
     c.execute("SELECT DISTINCT kategori FROM artikel WHERE kategori IS NOT NULL")
-    available_categories = [row[0] for row in c.fetchall()]
+    available_categories = list({(r[0] or "other").strip().lower() for r in c.fetchall()})
 
     c.execute("SELECT * FROM artikel ORDER BY tanggal_publish DESC, id DESC")
     all_rows = c.fetchall()
     total = len(all_rows)
     print(f"   Total articles: {total}")
 
+    # --- Pagination utama ---
     if total > 0:
         pages = [all_rows[i:i+ARTICLES_PER_PAGE] for i in range(0, total, ARTICLES_PER_PAGE)]
-
         for i, page_rows in enumerate(pages, start=1):
             if i == 1:
                 fn, canon, title = "index.html", f"{BASE_URL}/", f"{SITE_NAME} - Latest News"
             else:
                 fn, canon, title = f"page{i}.html", f"{BASE_URL}/page{i}.html", f"{SITE_NAME} - Page {i}"
 
-            nav = '<div class="pagination">'
-            for j in range(1, len(pages)+1):
-                href = "index.html" if j == 1 else f"page{j}.html"
-                a = ' class="active"' if j == i else ''
-                nav += f'<a href="{href}"{a}>{j}</a>'
-            nav += '</div>'
-
+            nav = build_pagination(i, len(pages), "index")
             html = render_page(title, f"Page {i}", canon, page_rows, "", available_categories, nav, filename=fn)
             (OUTPUT_DIR / fn).write_text(html, encoding="utf-8")
 
-    # Export per kategori
+    # --- Per kategori dengan pagination ---
     for cat in available_categories:
-        c.execute("SELECT * FROM artikel WHERE kategori = ? ORDER BY tanggal_publish DESC LIMIT 100", (cat,))
+        c.execute("SELECT * FROM artikel WHERE kategori = ? ORDER BY tanggal_publish DESC", (cat,))
         rows = c.fetchall()
-        
         if not rows:
             continue
-            
-        html = render_page(
-            f"{cat.title()} - {SITE_NAME}", 
-            f"Latest {cat} news", 
-            f"{BASE_URL}/{cat}.html", 
-            rows, cat, 
-            available_categories,
-            filename=f"{cat}.html"
-        )
-        (OUTPUT_DIR / f"{cat}.html").write_text(html, encoding="utf-8")
-        print(f"   ✅ {cat}.html ({len(rows)} articles)")
 
-    # Sitemap dengan Anchor URL per Artikel agar terindeks spesifik
+        cat_pages = [rows[i:i+ARTICLES_PER_PAGE] for i in range(0, len(rows), ARTICLES_PER_PAGE)]
+        for i, page_rows in enumerate(cat_pages, start=1):
+            if i == 1:
+                fn, canon, title = f"{cat}.html", f"{BASE_URL}/{cat}.html", f"{cat.title()} - {SITE_NAME}"
+            else:
+                fn = f"{cat}-page{i}.html"
+                canon = f"{BASE_URL}/{fn}"
+                title = f"{cat.title()} - {SITE_NAME} (Page {i})"
+
+            nav = build_pagination(i, len(cat_pages), cat)
+            html = render_page(title, f"Latest {cat} news", canon, page_rows, cat, available_categories, nav, filename=fn)
+            (OUTPUT_DIR / fn).write_text(html, encoding="utf-8")
+        print(f"   ✅ {cat}.html ({len(rows)} articles, {len(cat_pages)} pages)")
+
+    # --- Sitemap ---
     today = datetime.now().strftime('%Y-%m-%d')
     xml = ['<?xml version="1.0" encoding="UTF-8"?>', '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
-    
+
     pages_count = max(1, (total + ARTICLES_PER_PAGE - 1) // ARTICLES_PER_PAGE)
-    for i in range(1, pages_count+1):
+    for i in range(1, pages_count + 1):
         url = f"{BASE_URL}/" if i == 1 else f"{BASE_URL}/page{i}.html"
         xml.append(f'<url><loc>{url}</loc><lastmod>{today}</lastmod><priority>1.0</priority></url>')
-        
+
     for cat in available_categories:
-        xml.append(f'<url><loc>{BASE_URL}/{cat}.html</loc><lastmod>{today}</lastmod><priority>0.9</priority></url>')
-        
-    # Tambahkan Anchor setiap artikel ke sitemap agar Google mengindeks judul spesifik
-    c.execute("SELECT id, tanggal_update FROM artikel ORDER BY id DESC")
-    all_articles = c.fetchall()
-    for art in all_articles:
-        art_id = art["id"]
-        xml.append(f'<url><loc>{BASE_URL}/index.html#artikel-{art_id}</loc><lastmod>{today}</lastmod><priority>0.7</priority></url>')
+        c.execute("SELECT COUNT(*) FROM artikel WHERE kategori = ?", (cat,))
+        cnt = c.fetchone()[0]
+        cat_pages_count = max(1, (cnt + ARTICLES_PER_PAGE - 1) // ARTICLES_PER_PAGE)
+        for i in range(1, cat_pages_count + 1):
+            fn = f"{cat}.html" if i == 1 else f"{cat}-page{i}.html"
+            xml.append(f'<url><loc>{BASE_URL}/{fn}</loc><lastmod>{today}</lastmod><priority>0.9</priority></url>')
 
     xml.append('</urlset>')
     (OUTPUT_DIR / "sitemap.xml").write_text("\n".join(xml), encoding="utf-8")
-    
-    (OUTPUT_DIR / "robots.txt").write_text(f"User-agent: *\nAllow: /\n\nSitemap: {BASE_URL}/sitemap.xml\n", encoding="utf-8")
+    (OUTPUT_DIR / "robots.txt").write_text(
+        f"User-agent: *\nAllow: /\n\nSitemap: {BASE_URL}/sitemap.xml\n", encoding="utf-8"
+    )
     print(f"   ✅ sitemap.xml & robots.txt")
 
     conn.close()
+
 
 # ============================================================
 # MAIN
 # ============================================================
 if __name__ == "__main__":
     print("=" * 55)
-    print("EXPORT HTML (SEO Optimized Anchor & Schema)")
+    print("EXPORT HTML (SEO Optimized)")
     print("=" * 55)
     print(f"Database: {DB_PATH}")
     print(f"Output:   {OUTPUT_DIR}\n")
 
-    if not DB_PATH.exists():
-        print(f"ERROR: Database not found at {DB_PATH}")
-        exit(1)
-
+    # ✅ FIX: jangan exit(1) — buat DB kosong jika tidak ada
+    ensure_database()
     fix_database()
     export_all()
 
