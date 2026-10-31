@@ -1,55 +1,45 @@
 import sqlite3
-import html as html_mod
+import feedparser
+import requests
 import re
-import json
-from datetime import datetime
 from pathlib import Path
+from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# --- PATH UNTUK GITHUB ACTIONS ---
-DB_PATH = "database.sqlite" 
-OUTPUT_DIR = Path("output") 
-BASE_URL = "https://thenewsday112.github.io/1jamwow"
+# ============================================================
+# CONFIG
+# ============================================================
+BASE_DIR = Path(__file__).parent.resolve()
+DB_PATH = BASE_DIR / "database_5menit" / "database.sqlite"
+RSS_FILE = BASE_DIR / "rss_list.txt"
 
-ARTICLES_PER_PAGE = 20
-SITE_NAME = "News Portal Indonesia"
-
-ADSTERRA_CODE = """
-<div style="text-align:center;margin:20px 0;">
-    <script type="text/javascript">
-        atOptions = {
-            'key' : 'f9e40eb3b3cd05f1038aac7b36b33ad2',
-            'format' : 'iframe',
-            'height' : 90,
-            'width' : 728,
-            'params' : {}
-        };
-    </script>
-    <script type="text/javascript" src="https://upholdbrilliancerecast.com/f9e40eb3b3cd05f1038aac7b36b33ad2/invoke.js"></script>
-</div>
-"""
-
-CATEGORIES = ["technology", "business", "sports", "entertainment", "health", "science", "politics", "world", "finance", "travel", "food", "automotive", "education", "lifestyle", "other"]
-
-KEYWORDS = {
-    "technology": ["teknologi", "tech", "ai", "software", "digital", "internet"],
-    "business": ["bisnis", "business", "ekonomi", "finance", "saham", "investasi"],
-    "sports": ["olahraga", "sports", "sepakbola", "bola", "football"],
-    "entertainment": ["hiburan", "entertainment", "film", "musik", "artis"],
-    "health": ["kesehatan", "health", "medis", "dokter"],
-    "science": ["sains", "science", "penelitian", "nasa"],
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; NewsBot/1.0; +https://thenewsday112.github.io/pyton)"
 }
 
-def esc(text):
-    if not text: return ""
-    return html_mod.escape(str(text))
+MAX_WORKERS = 10
+TIMEOUT = 15
+MAX_ARTICLES_PER_FEED = 10
 
-def format_date(date_str):
-    if not date_str: return "-"
-    try:
-        dt = datetime.fromisoformat(str(date_str).replace('Z', '+00:00'))
-        return dt.strftime('%b %d, %Y')
-    except Exception:
-        return str(date_str)[:10]
+# ============================================================
+# KATEGORI
+# ============================================================
+KEYWORDS = {
+    "technology": ["teknologi", "tech", "ai", "software", "digital", "internet", "komputer", "programming", "developer", "aplikasi", "gadget"],
+    "business": ["bisnis", "business", "ekonomi", "finance", "saham", "investasi", "keuangan", "bank", "market", "funding", "ipo", "perusahaan"],
+    "sports": ["olahraga", "sports", "sepakbola", "bola", "football", "soccer", "nba", "fifa", "liga", "pertandingan", "atlet", "motogp", "badminton"],
+    "entertainment": ["hiburan", "entertainment", "film", "musik", "selebriti", "artis", "movie", "konser", "drama", "aktor"],
+    "health": ["kesehatan", "health", "medis", "dokter", "rumah sakit", "obat", "penyakit", "virus", "vaksin"],
+    "science": ["sains", "science", "penelitian", "nasa", "antariksa", "luar angkasa", "iklim", "lingkungan", "bumi"],
+    "politics": ["politik", "politics", "pemerintah", "presiden", "menteri", "dpr", "pemilu", "partai"],
+    "world": ["dunia", "world", "internasional", "global", "luar negeri"],
+    "finance": ["keuangan", "finance", "uang", "kredit", "pinjaman", "pajak"],
+    "travel": ["travel", "wisata", "liburan", "destinasi", "pariwisata", "hotel"],
+    "food": ["makanan", "food", "kuliner", "resep", "restoran", "masakan"],
+    "automotive": ["otomotif", "automotive", "mobil", "motor", "kendaraan", "mesin"],
+    "education": ["pendidikan", "education", "sekolah", "kampus", "universitas", "belajar"],
+    "lifestyle": ["gaya hidup", "lifestyle", "fashion", "kecantikan", "kesehatan mental"]
+}
 
 def detect_kategori(text):
     lower = text.lower()
@@ -58,169 +48,162 @@ def detect_kategori(text):
             return cat
     return "other"
 
-def fix_database():
-    print("[STEP 1] Checking database structure...")
+# ============================================================
+# DATABASE
+# ============================================================
+def setup_database():
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(DB_PATH))
-    c = conn.cursor()
-    c.execute("""
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS artikel (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, link TEXT UNIQUE, title TEXT, 
-            content TEXT, gambar TEXT, kategori TEXT DEFAULT 'other', 
-            tanggal_publish TEXT, tanggal_update TEXT
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            link TEXT UNIQUE,
+            title TEXT,
+            content TEXT,
+            gambar TEXT,
+            kategori TEXT DEFAULT 'other',
+            tanggal_publish TEXT,
+            tanggal_update TEXT
         )
     """)
-    c.execute("PRAGMA table_info(artikel)")
-    cols = {row[1] for row in c.fetchall()}
-    renames = {"judul": "title", "konten": "content"}
-    for old, new in renames.items():
-        if old in cols and new not in cols:
-            c.execute(f"ALTER TABLE artikel RENAME COLUMN {old} TO {new}")
-            cols.discard(old)
-            cols.add(new)
-    required = {"gambar": "TEXT", "kategori": "TEXT DEFAULT 'other'", "tanggal_publish": "TEXT", "tanggal_update": "TEXT"}
-    for col, col_type in required.items():
-        if col not in cols:
-            c.execute(f"ALTER TABLE artikel ADD COLUMN {col} {col_type}")
-    c.execute("UPDATE artikel SET kategori = 'other' WHERE kategori IS NULL OR kategori = ''")
     conn.commit()
-    c.execute("SELECT id, title, content, kategori FROM artikel")
-    rows = c.fetchall()
-    updated = 0
-    for row in rows:
-        artikel_id, title, content, current_cat = row
-        if current_cat == "other":
-            new_cat = detect_kategori(str(title) + " " + str(content))
-            if new_cat != "other":
-                c.execute("UPDATE artikel SET kategori = ? WHERE id = ?", (new_cat, artikel_id))
-                updated += 1
-    conn.commit()
+    return conn
+
+def extract_image(entry):
+    if hasattr(entry, 'media_content') and entry.media_content:
+        for m in entry.media_content:
+            if m.get('url'):
+                return m['url']
+    if hasattr(entry, 'media_thumbnail') and entry.media_thumbnail:
+        return entry.media_thumbnail[0].get('url', '')
+    if hasattr(entry, 'enclosures') and entry.enclosures:
+        for e in entry.enclosures:
+            if e.get('type', '').startswith('image'):
+                return e.get('href', '')
+    if hasattr(entry, 'summary'):
+        m = re.search(r'<img[^>]+src="([^"]+)"', entry.summary)
+        if m:
+            return m.group(1)
+    return ""
+
+def clean_html(text):
+    if not text:
+        return ""
+    text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL)
+    text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL)
+    return text.strip()
+
+def extract_content(entry):
+    if hasattr(entry, 'content') and entry.content:
+        return clean_html(entry.content[0].get('value', ''))
+    if hasattr(entry, 'summary'):
+        return clean_html(entry.summary)
+    if hasattr(entry, 'description'):
+        return clean_html(entry.description)
+    return ""
+
+def save_article(conn, entry, feed_url):
+    try:
+        title = entry.get('title', 'No Title')[:500]
+        link = entry.get('link', '')
+        if not link:
+            return False
+
+        content = extract_content(entry)
+        gambar = extract_image(entry)
+
+        tanggal = entry.get('published', '') or entry.get('updated', '')
+        if tanggal:
+            try:
+                from email.utils import parsedate_to_datetime
+                dt = parsedate_to_datetime(tanggal)
+                tanggal = dt.isoformat()
+            except Exception:
+                pass
+        if not tanggal:
+            tanggal = datetime.now().isoformat()
+
+        kategori = detect_kategori(title + " " + content)
+
+        conn.execute("""
+            INSERT OR IGNORE INTO artikel
+            (link, title, content, gambar, kategori, tanggal_publish, tanggal_update)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (link, title, content, gambar, kategori, tanggal, datetime.now().isoformat()))
+        return True
+    except Exception as e:
+        print(f"      ⚠️ Gagal simpan: {e}")
+        return False
+
+# ============================================================
+# SCRAPING
+# ============================================================
+def fetch_feed(url):
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+        r.raise_for_status()
+        feed = feedparser.parse(r.content)
+        if feed.bozo and not feed.entries:
+            return url, [], f"BOZO: {feed.bozo_exception}"
+        return url, feed.entries, None
+    except requests.Timeout:
+        return url, [], "TIMEOUT"
+    except requests.RequestException as e:
+        return url, [], f"HTTP: {e}"
+    except Exception as e:
+        return url, [], f"ERR: {e}"
+
+def main():
+    print("=" * 55)
+    print("SCRAPER STARTING")
+    print("=" * 55)
+
+    if not RSS_FILE.exists():
+        print(f"❌ ERROR: rss_list.txt tidak ditemukan di {RSS_FILE}")
+        return
+
+    with open(RSS_FILE, encoding="utf-8") as f:
+        urls = [l.strip() for l in f if l.strip() and not l.startswith("#")]
+
+    print(f"Total RSS URLs: {len(urls)}")
+    print(f"Database: {DB_PATH}\n")
+
+    conn = setup_database()
+    total_saved = 0
+    success = 0
+    failed = []
+
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+        futures = {ex.submit(fetch_feed, u): u for u in urls}
+        for i, fut in enumerate(as_completed(futures), 1):
+            url, entries, err = fut.result()
+            if err:
+                failed.append((url, err))
+                print(f"[{i}/{len(urls)}] ❌ {url[:60]} → {err}")
+            else:
+                success += 1
+                saved = 0
+                for entry in entries[:MAX_ARTICLES_PER_FEED]:
+                    if save_article(conn, entry, url):
+                        saved += 1
+                total_saved += saved
+                conn.commit()
+                print(f"[{i}/{len(urls)}] ✅ {url[:60]} → {saved}/{len(entries)} artikel")
+
     conn.close()
-    print("   Database OK.\n")
 
-HTML_HEAD = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="robots" content="index, follow, max-image-preview:large">
-<title>{title}</title>
-<meta name="description" content="{desc}">
-<link rel="canonical" href="{canonical}">
-<style>
-body{{font-family:'Segoe UI',system-ui,sans-serif;background:#f4f6f8;margin:0;padding:20px;color:#333;line-height:1.6}}
-.container{{max-width:1000px;margin:0 auto}}
-header{{background:#1e293b;color:#fff;padding:20px;border-radius:12px;margin-bottom:20px;text-align:center}}
-nav{{background:#fff;padding:10px;border-radius:12px;margin-bottom:24px;display:flex;gap:8px;flex-wrap:wrap;justify-content:center}}
-nav a{{padding:8px 16px;border-radius:8px;color:#475569;text-decoration:none;font-weight:600}}
-nav a.active{{background:#2563eb;color:#fff}}
-.article-card{{background:#fff;padding:24px;margin-bottom:24px;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.06);border-left:4px solid #2563eb}}
-.article-card h2{{margin:0 0 12px;font-size:22px;color:#1e293b}}
-.article-meta{{font-size:13px;color:#64748b;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid #e2e8f0}}
-.pagination{{text-align:center;margin:40px 0;display:flex;flex-wrap:wrap;justify-content:center;gap:8px}}
-.pagination a{{padding:10px 16px;border-radius:8px;text-decoration:none;color:#334155;background:#fff;box-shadow:0 2px 4px rgba(0,0,0,.05)}}
-.pagination a.active{{background:#2563eb;color:#fff}}
-footer{{text-align:center;color:#64748b;font-size:14px;padding:30px 0;margin-top:20px}}
-</style>
-</head>
-<body>
-<div class="container">
-<header><h1>{site}</h1></header>
-{nav}
-"""
+    print("\n" + "=" * 55)
+    print("SCRAPING SELESAI")
+    print("=" * 55)
+    print(f"Feed berhasil: {success}/{len(urls)}")
+    print(f"Feed gagal:    {len(failed)}")
+    print(f"Artikel baru:  {total_saved}")
+    print("=" * 55)
 
-HTML_FOOT = """<footer>&copy; {year} {site}. All rights reserved.</footer>
-</div></body></html>"""
-
-def render_nav(active_cat, available_categories):
-    html = '<nav>'
-    a_all = ' class="active"' if active_cat == "" else ''
-    html += f'<a href="index.html"{a_all}>🏠 All News</a>'
-    for cat in CATEGORIES:
-        if cat in available_categories and cat != "other":
-            a_cat = ' class="active"' if active_cat == cat else ''
-            html += f'<a href="{cat}.html"{a_cat}>📰 {cat.title()}</a>'
-    if "other" in available_categories:
-        a_other = ' class="active"' if active_cat == "other" else ''
-        html += f'<a href="other.html"{a_other}>📰 Other</a>'
-    return html + '</nav>'
-
-def render_card(row, filename="index.html"):
-    title = row["title"] if "title" in row.keys() else (row["judul"] if "judul" in row.keys() else "No Title")
-    content = row["content"] if "content" in row.keys() else (row["konten"] if "konten" in row.keys() else "")
-    gambar = row["gambar"] if "gambar" in row.keys() else ""
-    kategori = row["kategori"] if "kategori" in row.keys() else "other"
-    link = row["link"] if "link" in row.keys() else "#"
-    tanggal = row["tanggal_publish"] if "tanggal_publish" in row.keys() else ""
-    aid = row["id"] if "id" in row.keys() else ""
-    img = f'<img src="{esc(gambar)}" alt="{esc(title)}" loading="lazy" style="max-width:100%;">' if gambar else ""
-    cat_label = kategori.title() if kategori else "Other"
-    return f"""
-<article class="article-card" id="artikel-{aid}">
-    <h2>{esc(title)}</h2>
-    <div class="article-meta">📅 {format_date(tanggal)} | Category: <strong>{esc(cat_label)}</strong> | <a href="{esc(link)}" target="_blank">Source</a></div>
-    <div class="article-body">{img}{content or ""}{ADSTERRA_CODE}</div>
-</article>"""
-
-def render_page(title, desc, canonical, rows, active_cat, available_categories, page_nav="", filename="index.html"):
-    cards = "".join(render_card(r, filename) for r in rows)
-    head = HTML_HEAD.format(title=esc(title), desc=esc(desc), canonical=esc(canonical), site=esc(SITE_NAME), nav=render_nav(active_cat, available_categories))
-    body = f'<h1 style="margin-bottom:30px;">{esc(title)}</h1>'
-    body += cards + page_nav
-    return head + body + HTML_FOOT.format(year=datetime.now().year, site=esc(SITE_NAME))
-
-def export_all():
-    print("[STEP 2] Exporting HTML...")
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    c.execute("SELECT DISTINCT kategori FROM artikel WHERE kategori IS NOT NULL")
-    available_categories = [row[0] for row in c.fetchall()]
-    c.execute("SELECT * FROM artikel ORDER BY tanggal_publish DESC, id DESC")
-    all_rows = c.fetchall()
-    total = len(all_rows)
-    print(f"   Total articles: {total}")
-    if total > 0:
-        pages = [all_rows[i:i+ARTICLES_PER_PAGE] for i in range(0, total, ARTICLES_PER_PAGE)]
-        for i, page_rows in enumerate(pages, start=1):
-            fn = "index.html" if i == 1 else f"page{i}.html"
-            canon = f"{BASE_URL}/" if i == 1 else f"{BASE_URL}/{fn}"
-            title = f"Latest News" if i == 1 else f"Page {i}"
-            nav = '<div class="pagination">'
-            for j in range(1, len(pages)+1):
-                href = "index.html" if j == 1 else f"page{j}.html"
-                a = ' class="active"' if j == i else ''
-                nav += f'<a href="{href}"{a}>{j}</a>'
-            nav += '</div>'
-            html = render_page(title, f"Page {i}", canon, page_rows, "", available_categories, nav, filename=fn)
-            (OUTPUT_DIR / fn).write_text(html, encoding="utf-8")
-
-    for cat in available_categories:
-        c.execute("SELECT * FROM artikel WHERE kategori = ? ORDER BY tanggal_publish DESC LIMIT 100", (cat,))
-        rows = c.fetchall()
-        if not rows: continue
-        html = render_page(f"{cat.title()}", f"Latest {cat}", f"{BASE_URL}/{cat}.html", rows, cat, available_categories, filename=f"{cat}.html")
-        (OUTPUT_DIR / f"{cat}.html").write_text(html, encoding="utf-8")
-        print(f"   ✅ {cat}.html ({len(rows)} articles)")
-
-    today = datetime.now().strftime('%Y-%m-%d')
-    xml = ['<?xml version="1.0" encoding="UTF-8"?>', '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
-    pages_count = max(1, (total + ARTICLES_PER_PAGE - 1) // ARTICLES_PER_PAGE)
-    for i in range(1, pages_count+1):
-        url = f"{BASE_URL}/" if i == 1 else f"{BASE_URL}/page{i}.html"
-        xml.append(f'<url><loc>{url}</loc><lastmod>{today}</lastmod><priority>1.0</priority></url>')
-    for cat in available_categories:
-        xml.append(f'<url><loc>{BASE_URL}/{cat}.html</loc><lastmod>{today}</lastmod><priority>0.9</priority></url>')
-    xml.append('</urlset>')
-    (OUTPUT_DIR / "sitemap.xml").write_text("\n".join(xml), encoding="utf-8")
-    (OUTPUT_DIR / "robots.txt").write_text(f"User-agent: *\nAllow: /\n\nSitemap: {BASE_URL}/sitemap.xml\n", encoding="utf-8")
-    print(f"   ✅ sitemap.xml & robots.txt")
-    conn.close()
+    if failed:
+        print("\nFeed yang gagal:")
+        for u, e in failed[:20]:
+            print(f"  - {u} ({e})")
 
 if __name__ == "__main__":
-    if not Path(DB_PATH).exists():
-        print(f"ERROR: Database not found at {DB_PATH}")
-        exit(1)
-    fix_database()
-    export_all()
-    print("EXPORT COMPLETE!")
+    main()
