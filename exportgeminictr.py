@@ -241,6 +241,12 @@ def render_page(title, desc, canonical, rows, active_cat, page_nav="", filename=
         if (i + 1) % 5 == 0:
             cards += ADSTERRA_CODE
 
+    # Jika tidak ada artikel, tampilkan pesan kosong
+    if not rows:
+        cards = '<div style="text-align:center;padding:60px 20px;color:#64748b;">' \
+                '<h2 style="font-size:22px;margin-bottom:12px;">Belum ada artikel di kategori ini</h2>' \
+                '<p>Silakan kembali lagi nanti.</p></div>'
+
     head = HTML_HEAD.format(
         title=esc(title), desc=esc(desc), canonical=esc(canonical),
         site=esc(SITE_NAME), nav=render_nav(active_cat)
@@ -279,14 +285,10 @@ def export_all():
             html = render_page(title, f"Page {i}", canon, page_rows, "", nav, filename=fn)
             (OUTPUT_DIR / fn).write_text(html, encoding="utf-8")
 
-    # Per kategori
-    c.execute("SELECT DISTINCT kategori FROM artikel WHERE kategori IS NOT NULL")
-    available_categories = [r[0] for r in c.fetchall()]
-    for cat in available_categories:
+    # ✅ PERBAIKAN: Loop semua CATEGORIES, bukan hanya yang ada artikelnya
+    for cat in CATEGORIES:
         c.execute("SELECT * FROM artikel WHERE kategori = ? ORDER BY tanggal_publish DESC LIMIT 100", (cat,))
         rows = c.fetchall()
-        if not rows:
-            continue
         html = render_page(
             f"{cat.title()} - {SITE_NAME}",
             f"Latest {cat} news",
@@ -304,7 +306,7 @@ def export_all():
     for i in range(1, pages_count+1):
         url = f"{BASE_URL}/" if i == 1 else f"{BASE_URL}/page{i}.html"
         xml.append(f'<url><loc>{url}</loc><lastmod>{today}</lastmod><priority>1.0</priority></url>')
-    for cat in available_categories:
+    for cat in CATEGORIES:
         xml.append(f'<url><loc>{BASE_URL}/{cat}.html</loc><lastmod>{today}</lastmod><priority>0.9</priority></url>')
     xml.append('</urlset>')
     (OUTPUT_DIR / "sitemap.xml").write_text("\n".join(xml), encoding="utf-8")
