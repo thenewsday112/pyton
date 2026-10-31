@@ -32,6 +32,93 @@ footer{text-align:center;color:#64748b;font-size:14px;padding:30px 0;border-top:
 <header><h1>News Portal Indonesia</h1></header>
 <nav><a href="index.html">🏠 All News</a><a href="technology.html">📰 Technology</a><a href="business.html">📰 Business</a><a href="sports.html">📰 Sports</a><a href="entertainment.html">📰 Entertainment</a><a href="health.html">📰 Health</a><a href="science.html">📰 Science</a><a href="politics.html">📰 Politics</a><a href="world.html">📰 World</a><a href="finance.html">📰 Finance</a><a href="travel.html" class="active">📰 Travel</a><a href="food.html">📰 Food</a><a href="automotive.html">📰 Automotive</a><a href="education.html">📰 Education</a><a href="lifestyle.html">📰 Lifestyle</a><a href="other.html">📰 Other</a></nav>
 <h1 style="color:#1e293b;border-left:5px solid #2563eb;padding-left:15px;margin-bottom:30px;">Travel - News Portal Indonesia</h1>
+<article class="article-card" id="artikel-3392">
+    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Five things to know before you build on the USAJOBS Search API", "image": [], "datePublished": "2026-10-31T11:32:33+00:00", "dateModified": "2026-10-31T11:32:33+00:00", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/travel.html#artikel-3392"}</script>
+    <h2>Five things to know before you build on the USAJOBS Search API</h2>
+    <div class="article-meta">
+        📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Travel</strong> &nbsp;|&nbsp;
+        <a href="https://dev.to/yourevenings/five-things-to-know-before-you-build-on-the-usajobs-search-api-30i4" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
+    </div>
+    <div class="article-body"><p>USAJOBS publishes an official Search API (data.usajobs.gov/api/Search) for US federal job announcements. We built a scheduled job feed on it, and these are the details that shaped the code. Disclosure: the hosted version at the end is ours, and we charge for it.</p>
+
+<h2>
+  
+  
+  1. Pay comes with an interval code
+</h2>
+
+<p>Each pay range comes with a RateIntervalCode: PA for per year, PH for per hour, plus PD, PW, BW and PM for daily, weekly, biweekly and monthly. To compare jobs on salary, convert everything to a yearly figure. We use 2,087 hours for a year of hourly pay (the federal standard), 260 days, 52 weeks, 26 pay periods or 12 months. Filter on the top of the range, or you'll drop hourly jobs that pay well.</p>
+
+<h2>
+  
+  
+  2. One query stops at 10,000 results
+</h2>
+
+<p>The API won't page past 10,000 results for one query. A broad search such as "all jobs posted this month" can hit that limit without telling you. Narrow it by location, agency, occupational series or a posted-within window, and log it whenever a query reaches the limit, so a short result is never mistaken for a complete one.</p>
+
+<h2>
+  
+  
+  3. Ask for public jobs explicitly
+</h2>
+
+<p>Many announcements are open only to current federal employees or particular groups. If your users are the general public, request WhoMayApply=Public. It's also the only option the API serves to a key that hasn't been given extra authorisation.</p>
+
+<h2>
+  
+  
+  4. Codes need a lookup table
+</h2>
+
+<p>Schedule, appointment, service type and travel come back as codes. Map them to words (Full-time, Permanent, Competitive, Occasional travel) before anyone downstream sees them, or every consumer ends up writing their own mapping.</p>
+
+<h2>
+  
+  
+  5. Announcements contain contact details
+</h2>
+
+<p>Rows can carry an agency contact email and phone number, and the announcement text can include more of them, sometimes with a named person. Unless your use case needs them, drop the contact fields and mask emails and phone numbers in free text. Don't store full announcement text by default.</p>
+
+<h2>
+  
+  
+  The hosted version (disclosure: we built it)
+</h2>
+
+<p>Our Apify Actor, <a href="https://apify.com/yourevenings/government-jobs-api">Government Jobs API: USAJOBS</a>, does all five for you:</p>
+
+<ul>
+<li>
+<strong>Yearly pay</strong> is worked out for every row with a standard pay interval, and the salary filter runs before you're charged.</li>
+<li>
+<strong>A free scan_limit row</strong> tells you when a search hit the 10,000 limit.</li>
+<li>
+<strong>Public jobs only</strong>, with codes turned into words.</li>
+<li>
+<strong>Contact details</strong> are dropped and masked by default.</li>
+<li>
+<strong>No API key</strong> is needed on your side.</li>
+<li>
+<strong>Monitor mode</strong> returns only jobs it hasn't returned before.</li>
+<li>
+<strong>Pricing:</strong> $0.002 per job, plus $0.01 for a monitor run that finds new jobs (base prices; higher Apify plans pay less).
+</li>
+</ul>
+
+
+
+
+<span>{</span><span> </span><span>"keywords"</span><span>:</span><span> </span><span>[</span><span>"data scientist"</span><span>],</span><span> </span><span>"locations"</span><span>:</span><span> </span><span>[</span><span>"Washington, District of Columbia"</span><span>],</span><span> </span><span>"radiusMiles"</span><span>:</span><span> </span><span>25</span><span>,</span><span> </span><span>"postedWithinDays"</span><span>:</span><span> </span><span>14</span><span>,</span><span> </span><span>"minSalaryUsd"</span><span>:</span><span> </span><span>100000</span><span> </span><span>}</span><span>
+</span>
+
+
+
+
+
+<p><em>Not an official USAJOBS or OPM product, and not endorsed by any federal agency. Always check the official announcement on usajobs.gov before you apply.</em></p></div>
+</article>
 <article class="article-card" id="artikel-2990">
     <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Prediction: Sassuolo vs Fiorentina", "image": [], "datePublished": "2026-10-31T11:13:05+00:00", "dateModified": "2026-10-31T11:13:05+00:00", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/travel.html#artikel-2990"}</script>
     
@@ -69,15 +156,6 @@ footer{text-align:center;color:#64748b;font-size:14px;padding:30px 0;border-top:
     </div>
     <div class="article-body"><img src="https://i2-prod.mirror.co.uk/sport/football/news/article37828470.ece/ALTERNATES/s615/0_Chelsea-FC-v-Manchester-United-Premier-League-202627.jpg" alt="Chelsea vs Man Utd predicted by six pundits as Michael Carrick fights for his job" loading="lazy">Manchester United head coach Michael Carrick remains under pressure as his side travel to Stamford Bridge to face Chelsea in the Premier League at Saturday lunchtime</div>
 </article>
-<article class="article-card" id="artikel-806">
-    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Apple TV's 19-Episode High-Concept Series Delivers A Masterclass In Hard Sci-Fi", "image": ["https://static0.srcdn.com/wordpress/wp-content/uploads/2026/10/jimmi-simpson-as-ryan-holder-in-dark-matter.jpg"], "datePublished": "2026-10-31T06:30:19+00:00", "dateModified": "2026-10-31T06:30:19+00:00", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/travel.html#artikel-806"}</script>
-    <h2>Apple TV&#x27;s 19-Episode High-Concept Series Delivers A Masterclass In Hard Sci-Fi</h2>
-    <div class="article-meta">
-        📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Travel</strong> &nbsp;|&nbsp;
-        <a href="https://screenrant.com/dark-matter-apple-tv-high-concept-sci-fi/" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
-    </div>
-    <div class="article-body"><img src="https://static0.srcdn.com/wordpress/wp-content/uploads/2026/10/jimmi-simpson-as-ryan-holder-in-dark-matter.jpg" alt="Apple TV&#x27;s 19-Episode High-Concept Series Delivers A Masterclass In Hard Sci-Fi" loading="lazy"><p>Modern sci-fi is absolutely obsessed with the multiverse. Parallel dimensions have long featured in <a href="https://screenrant.com/star-trek-episode-mirror-mirror-perfected-alternate-universe-trope/">classics like <em>Star Trek</em></a> and <em>The Twilight Zone</em>, but the 2010s and 2020s have turned alternate realities into a genre staple. From blockbuster crossovers to ambitious experimental TV shows, stories about alternate versions of our own reality are everywhere. That popularity has produced some spectacular sci-fi, but it’s also meant that interdimensional travel is starting to feel too familiar to be exciting.</p></div>
-</article>
 <div style="text-align:center;margin:20px 0;">
     <script type="text/javascript">
         atOptions = {
@@ -91,6 +169,15 @@ footer{text-align:center;color:#64748b;font-size:14px;padding:30px 0;border-top:
     <script type="text/javascript" src="https://upholdbrilliancerecast.com/f9e40eb3b3cd05f1038aac7b36b33ad2/invoke.js"></script>
 </div>
 
+<article class="article-card" id="artikel-806">
+    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Apple TV's 19-Episode High-Concept Series Delivers A Masterclass In Hard Sci-Fi", "image": ["https://static0.srcdn.com/wordpress/wp-content/uploads/2026/10/jimmi-simpson-as-ryan-holder-in-dark-matter.jpg"], "datePublished": "2026-10-31T06:30:19+00:00", "dateModified": "2026-10-31T06:30:19+00:00", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/travel.html#artikel-806"}</script>
+    <h2>Apple TV&#x27;s 19-Episode High-Concept Series Delivers A Masterclass In Hard Sci-Fi</h2>
+    <div class="article-meta">
+        📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Travel</strong> &nbsp;|&nbsp;
+        <a href="https://screenrant.com/dark-matter-apple-tv-high-concept-sci-fi/" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
+    </div>
+    <div class="article-body"><img src="https://static0.srcdn.com/wordpress/wp-content/uploads/2026/10/jimmi-simpson-as-ryan-holder-in-dark-matter.jpg" alt="Apple TV&#x27;s 19-Episode High-Concept Series Delivers A Masterclass In Hard Sci-Fi" loading="lazy"><p>Modern sci-fi is absolutely obsessed with the multiverse. Parallel dimensions have long featured in <a href="https://screenrant.com/star-trek-episode-mirror-mirror-perfected-alternate-universe-trope/">classics like <em>Star Trek</em></a> and <em>The Twilight Zone</em>, but the 2010s and 2020s have turned alternate realities into a genre staple. From blockbuster crossovers to ambitious experimental TV shows, stories about alternate versions of our own reality are everywhere. That popularity has produced some spectacular sci-fi, but it’s also meant that interdimensional travel is starting to feel too familiar to be exciting.</p></div>
+</article>
 <article class="article-card" id="artikel-66">
     <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "European diplomats shun Russia at G20 gathering in the US", "image": [], "datePublished": "2026-10-31T01:56:00Z", "dateModified": "2026-10-31T01:56:00Z", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/travel.html#artikel-66"}</script>
     <h2>European diplomats shun Russia at G20 gathering in the US</h2>
@@ -159,6 +246,19 @@ footer{text-align:center;color:#64748b;font-size:14px;padding:30px 0;border-top:
 </ul>
 <p>The post <a href="https://www.juvefc.com/juventus-held-by-rennes-in-turin-as-var-rules-out-late-lucumi-goal/">Woltemade involved in both goals but VAR denies Lucumí as Juventus draw 2-2 with Rennes</a> appeared first on <a href="https://www.juvefc.com">Juvefc.com</a>.</p></div>
 </article>
+<div style="text-align:center;margin:20px 0;">
+    <script type="text/javascript">
+        atOptions = {
+            'key' : 'f9e40eb3b3cd05f1038aac7b36b33ad2',
+            'format' : 'iframe',
+            'height' : 90,
+            'width' : 728,
+            'params' : {}
+        };
+    </script>
+    <script type="text/javascript" src="https://upholdbrilliancerecast.com/f9e40eb3b3cd05f1038aac7b36b33ad2/invoke.js"></script>
+</div>
+
 <article class="article-card" id="artikel-1210">
     <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Chelsea news: Stewart departure, Scott interest and Bournemouth preparations", "image": ["https://media.readchelsea.com/readchelsea/2026/08/WmOBmcBImXj9.webp"], "datePublished": "2026-10-08T18:00:00+00:00", "dateModified": "2026-10-08T18:00:00+00:00", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/travel.html#artikel-1210"}</script>
     <h2>Chelsea news: Stewart departure, Scott interest and Bournemouth preparations</h2>
@@ -264,19 +364,6 @@ footer{text-align:center;color:#64748b;font-size:14px;padding:30px 0;border-top:
 
 <p><a href="https://readchelsea.com/news/"><strong><em>Latest Chelsea news, transfer updates and analysis</em></strong></a></p></div>
 </article>
-<div style="text-align:center;margin:20px 0;">
-    <script type="text/javascript">
-        atOptions = {
-            'key' : 'f9e40eb3b3cd05f1038aac7b36b33ad2',
-            'format' : 'iframe',
-            'height' : 90,
-            'width' : 728,
-            'params' : {}
-        };
-    </script>
-    <script type="text/javascript" src="https://upholdbrilliancerecast.com/f9e40eb3b3cd05f1038aac7b36b33ad2/invoke.js"></script>
-</div>
-
 <article class="article-card" id="artikel-1482">
     <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Aston Villa vs Chelsea FC: Possible Lineups, Stats, Prediction & Odds | English Premier League", "image": [], "datePublished": "2016-04-01T16:30:44+00:00", "dateModified": "2016-04-01T16:30:44+00:00", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/travel.html#artikel-1482"}</script>
     <h2>Aston Villa vs Chelsea FC: Possible Lineups, Stats, Prediction &amp; Odds | English Premier League</h2>

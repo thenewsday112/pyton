@@ -32,126 +32,51 @@ footer{text-align:center;color:#64748b;font-size:14px;padding:30px 0;border-top:
 <header><h1>News Portal Indonesia</h1></header>
 <nav><a href="index.html" class="active">🏠 All News</a><a href="technology.html">📰 Technology</a><a href="business.html">📰 Business</a><a href="sports.html">📰 Sports</a><a href="entertainment.html">📰 Entertainment</a><a href="health.html">📰 Health</a><a href="science.html">📰 Science</a><a href="politics.html">📰 Politics</a><a href="world.html">📰 World</a><a href="finance.html">📰 Finance</a><a href="travel.html">📰 Travel</a><a href="food.html">📰 Food</a><a href="automotive.html">📰 Automotive</a><a href="education.html">📰 Education</a><a href="lifestyle.html">📰 Lifestyle</a><a href="other.html">📰 Other</a></nav>
 <h1 style="color:#1e293b;border-left:5px solid #2563eb;padding-left:15px;margin-bottom:30px;">News Portal Indonesia - Page 9</h1>
-<article class="article-card" id="artikel-420">
-    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Run It Twice, Charge Once: Idempotency Keys in n8n", "image": [], "datePublished": "2026-10-31T10:12:13+00:00", "dateModified": "2026-10-31T10:12:13+00:00", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-420"}</script>
-    <h2>Run It Twice, Charge Once: Idempotency Keys in n8n</h2>
-    <div class="article-meta">
-        📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Technology</strong> &nbsp;|&nbsp;
-        <a href="https://dev.to/haopengai/run-it-twice-charge-once-idempotency-keys-in-n8n-3m31" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
-    </div>
-    <div class="article-body"><p><em>This is part of my build-in-public series on running LLM workflows in n8n in production. Everything here is from real templates I sell and support — the mistakes are mine, the fixes are tested.</em></p>
-
-<h2>
-  
-  
-  The customer got charged twice, and every log said "success"
-</h2>
-
-<p>A workflow sent a payment, then a message, then a record update. One night the provider call timed out — not failed, timed out. n8n did the sensible thing and retried. The retry succeeded. So did the first attempt, it turned out: the timeout was on the way back, not on the way in. The customer was charged twice, messaged twice, and every log said "success," because each execution had, in isolation, succeeded.</p>
-
-<p>Retries fix "not yet" failures. They create duplicate side effects. Any workflow that retries — and any workflow that replays from a dead-letter queue, or resumes from a checkpoint — will eventually run the same side effect twice. If that side effect is sending a message, charging a card, or creating a record, "eventually" is a bug report, not a theory.</p>
-
-<h2>
-  
-  
-  An idempotency key is a promise about the second run
-</h2>
-
-<p>The fix is one extra field, carried through the whole workflow: an idempotency key. It identifies the intended operation, not the attempt. The same key on a second attempt must produce the same result as the first — without doing the work again.</p>
-
-<p>The key has to be stable across retries, replays, and restarts. That rules out anything generated inside the attempt: a fresh UUID per run is a new operation every time, which is exactly what you are trying to prevent. The key comes from the job itself: the job id plus the operation name is the usual shape — job-4821:charge, job-4821:notify. Same job, same operation, same key, no matter how many times it runs.</p>
-
-<h2>
-  
-  
-  Check the key before the side effect, not after
-</h2>
-
-<p>Ordering is the whole mechanism, and it is easy to get backwards. The workflow must look up the key before it performs the side effect, not log it afterwards:</p>
-
-<ol>
-<li>Before the charge, the send, or the create, check a small store for this key.</li>
-<li>If a completed result exists for the key, return that result and skip the side effect entirely. The retry becomes a no-op that reports the original outcome.</li>
-<li>If no result exists, perform the side effect, then store the result under the key — and the store write must be part of the same step, not a best-effort log line afterwards.</li>
-</ol>
-
-<p>Step 3 is where most hand-rolled versions break. If the workflow charges the card and then crashes before recording the key, the retry sees no key and charges again. The record has to be written as close to the side effect as the system allows, and the window between them is the window where duplicates still live. Where the provider offers a native idempotency key — Stripe is the classic example — use it: the provider's store is atomic in a way your workflow's two-step version is not, and passing your key through means the provider itself dedupes the second call.</p>
-
-<p>The store does not need to be fancy. A table with the key, the operation, the result, and a timestamp is enough. What it must be is durable and shared: not execution-local state, not a variable that dies with the run, and visible to every retry path — the ordinary retry, the DLQ replay, and the checkpoint resume. A key that only one retry path checks is a key that the other paths will ignore.</p>
-
-<h2>
-  
-  
-  Keys expire, results do not vanish silently
-</h2>
-
-<p>Two practical details. First, keys need a retention policy. Keep them at least as long as your longest retry and replay window — if a DLQ entry can be replayed a week later, a key that expired after a day will not protect it. Second, a stored result is a decision, not just a cache entry: when a retry returns a stored "already charged" result, that outcome should be visible in the job record, so a human reading the run can tell "skipped as duplicate" from "never ran." A silent no-op looks identical to a skipped step in the logs, and the next person debugging will not know which one happened.</p>
-
-<p>This is a different job from the failure classification in the poison-message piece and the retry budget in the backoff piece. Classification decides whether to retry at all; the retry budget decides how many times. Idempotency decides what the second attempt is allowed to do. All three have to hold: a workflow that retries without idempotency will eventually double-charge; a workflow with idempotency but no classification will retry poison inputs forever, harmlessly but pointlessly.</p>
-
-<h2>
-  
-  
-  The test is a double delivery, not a happy path
-</h2>
-
-<p>Testing this means deliberately delivering the same job twice and asserting three things: the side effect happened exactly once, the second run returned the first run's result, and the job record shows the second run as a duplicate skip rather than a fresh success. The test I actually run is boring and specific: one job, two deliveries — one of them forced by killing the run between the side effect and the record, if the system allows it — and a count of side effects at the end. Anything more than one means the key is not being checked where it matters.</p>
-
-<h2>
-  
-  
-  The principle
-</h2>
-
-<p>A retry is a second attempt at the same operation, and the system has to treat it that knows that. Give every side effect a key derived from the job and the operation, check it before acting, store the result with it, and let the provider dedupe where it can. The workflow gets slightly slower — one lookup per side effect — and in return a timeout stops being a double charge. When a run is retried, and it will be, the question should never be "did we already do this?" The key should already have answered it.</p>
-
-
-
-
-<p><em>I'm building <a href="https://payhip.com/haopengailab">AI Automation Lab</a> — production-ready n8n workflow templates. The free <a href="https://payhip.com/b/ulER8">AI Hook Generator</a> shows how I structure real workflows; my open-source templates live at <a href="https://github.com/zhp910318/n8n-ai-automation-lab">github.com/zhp910318/n8n-ai-automation-lab</a>.</em></p></div>
-</article>
-<article class="article-card" id="artikel-51">
-    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Trump vs MAGA: Why his movement is splitting", "image": [], "datePublished": "2026-10-31T10:11:47+00:00", "dateModified": "2026-10-31T10:11:47+00:00", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-51"}</script>
-    <h2>Trump vs MAGA: Why his movement is splitting</h2>
+<article class="article-card" id="artikel-1990">
+    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "The rise of the 15-foot skeleton—how a viral novelty became a Halloween staple", "image": [], "datePublished": "2026-10-31T10:27:19+00:00", "dateModified": "2026-10-31T10:27:19+00:00", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-1990"}</script>
+    <h2>The rise of the 15-foot skeleton—how a viral novelty became a Halloween staple</h2>
     <div class="article-meta">
         📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Other</strong> &nbsp;|&nbsp;
-        <a href="https://www.france24.com/en/video/20261031-trump-vs-maga-why-his-movement-is-splitting" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
+        <a href="https://www.cnbc.com/make-it/2026/10/23/giant-halloween-skeleton-decorations.html" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
     </div>
-    <div class="article-body">As the 2026 midterm elections approach, divisions within the MAGA camp are becoming increasingly visible. From the war in Iran and rising fuel prices to the Epstein files, several of Trump’s decisions are fuelling divisions among his most loyal supporters.
- 
-Once united by a shared vision of America, MAGA now brings together factions that increasingly disagree over foreign policy, the economy and what “America First” should actually mean. Yet Trump remains the central figure holding this political coalition together – and he is fighting to keep it that way.
- 
-Why are some of the president’s longtime allies distancing themselves from him? Can MAGA remain united despite these disagreements? And can Trump still mobilise his base ahead of the midterms?
- 
-🔍 Our journalist Stella Elgersma breaks down the divisions within the MAGA movement and Donald Trump’s strategy to rally his supporters, once again.</div>
+    <div class="article-body">In just six years, giant skeletons have gone from an absurd viral novelty to the centerpiece of an expanding retail arms race for the front lawn.</div>
 </article>
-<article class="article-card" id="artikel-1018">
-    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Chelsea vs Manchester United LIVE: Premier League match stream, latest team news, lineups, TV, prediction", "image": ["https://static.standard.co.uk/2022/10/07/15/newFile-9.jpg?width=1200&auto=webp&crop=3%3A2"], "datePublished": "2026-10-31T10:10:27+00:00", "dateModified": "2026-10-31T10:10:27+00:00", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-1018"}</script>
-    <h2>Chelsea vs Manchester United LIVE: Premier League match stream, latest team news, lineups, TV, prediction</h2>
+<article class="article-card" id="artikel-2510">
+    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Chelsea XI vs Manchester United: Predicted lineup, confirmed team news, injury latest for Premier League today", "image": ["https://static.standard.co.uk/2026/10/27/16/27/ChelseapredictedXI2627.png?width=1200&auto=webp&crop=3%3A2"], "datePublished": "2026-10-31T10:27:17+00:00", "dateModified": "2026-10-31T10:27:17+00:00", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-2510"}</script>
+    <h2>Chelsea XI vs Manchester United: Predicted lineup, confirmed team news, injury latest for Premier League today</h2>
     <div class="article-meta">
         📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Other</strong> &nbsp;|&nbsp;
-        <a href="https://www.standard.co.uk/sport/football/chelsea-fc-vs-man-utd-live-stream-latest-score-updates-result-b1303021.html" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
+        <a href="https://www.standard.co.uk/sport/football/chelsea-fc-xi-vs-man-utd-predicted-lineup-confirmed-team-news-injury-latest-premier-league-2026-today-b1302848.html" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
     </div>
-    <div class="article-body"><img src="https://static.standard.co.uk/2022/10/07/15/newFile-9.jpg?width=1200&amp;auto=webp&amp;crop=3%3A2" alt="Chelsea vs Manchester United LIVE: Premier League match stream, latest team news, lineups, TV, prediction" loading="lazy"><p>Michael Carrick is bidding to save his job in crunch Stamford Bridge clash</p></div>
+    <div class="article-body"><img src="https://static.standard.co.uk/2026/10/27/16/27/ChelseapredictedXI2627.png?width=1200&amp;auto=webp&amp;crop=3%3A2" alt="Chelsea XI vs Manchester United: Predicted lineup, confirmed team news, injury latest for Premier League today" loading="lazy"><p>Cole Palmer returns for crunch clash but still no Joao Pedro for the Blues</p></div>
 </article>
-<article class="article-card" id="artikel-171">
-    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Trump declares robot imports a national security threat", "image": ["https://media.thenextweb.com/2026/10/donald-trump-reporters-air-force-one-tarmac.avif"], "datePublished": "2026-10-31T10:10:27+00:00", "dateModified": "2026-10-31T10:10:27+00:00", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-171"}</script>
-    <h2>Trump declares robot imports a national security threat</h2>
-    <div class="article-meta">
-        📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Other</strong> &nbsp;|&nbsp;
-        <a href="https://thenextweb.com/news/trump-robot-imports-national-security-section-232" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
-    </div>
-    <div class="article-body"><img src="https://media.thenextweb.com/2026/10/donald-trump-reporters-air-force-one-tarmac.avif" alt="Trump declares robot imports a national security threat" loading="lazy"><img src="https://media.thenextweb.com/2026/10/donald-trump-reporters-air-force-one-tarmac.avif"><br><p>US President Donald Trump has ordered trade talks on robot imports. A Commerce Department investigation found that foreign-made robots and industrial machinery threaten national security. He signed the proclamation on Wednesday 28 October. It sets no tariffs for now. The proclamation uses Section 232 of the Trade Expansion Act of 1962. The law lets the [&hellip;]</p>
-<br><br><a href="https://thenextweb.com/news/trump-robot-imports-national-security-section-232?utm_source=social&amp;utm_medium=feed&amp;utm_campaign=profeed">This story continues</a> at The Next Web</div>
-</article>
-<article class="article-card" id="artikel-828">
-    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "The 10 Best Video Games Based on Movies, Ranked", "image": ["https://static0.colliderimages.com/wordpress/wp-content/uploads/2024/01/indiana-jones-and-the-great-circle.jpg"], "datePublished": "2026-10-31T10:08:12+00:00", "dateModified": "2026-10-31T10:08:12+00:00", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-828"}</script>
-    <h2>The 10 Best Video Games Based on Movies, Ranked</h2>
+<article class="article-card" id="artikel-2995">
+    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Manchester United target left-back reinforcement in January", "image": [], "datePublished": "2026-10-31T10:26:42+00:00", "dateModified": "2026-10-31T10:26:42+00:00", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-2995"}</script>
+    
     <div class="article-meta">
         📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Business</strong> &nbsp;|&nbsp;
-        <a href="https://collider.com/best-video-games-based-on-movies-ranked/" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
+        <a href="https://www.soccernews.com/manchester-united-target-left-back-reinforcement-in-january/407306/" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
     </div>
-    <div class="article-body"><img src="https://static0.colliderimages.com/wordpress/wp-content/uploads/2024/01/indiana-jones-and-the-great-circle.jpg" alt="The 10 Best Video Games Based on Movies, Ranked" loading="lazy"><p>For decades, movie tie-in games were the joke of the gaming industry. Since <a href="https://collider.com/tag/movie/et-the-extra-terrestrial/"><em><strong>E.T.</strong></em></a> became the symbol of the US video game market crash of 1983, the bad reputation of movie tie-in video games was set in stone. They were usually rushed out to hit a release date, built on a shoestring budget, and forgotten before the film left theaters. But a handful of licensed games broke the curse, and the best video games based on movies often succeeded by refusing to simply replay the film and call it a day.</p></div>
+    <div class="article-body"><p>According to The Times, Manchester United are prepared to enter the January transfer market as they look to address weaknesses that have been exposed by injuries and a disappointing start to the season. Pressure continues to mount on Michael Carrick, whose side have gone eight matches without a victory in all competitions. However, injury problems [&#8230;]</p>
+<p>The post <a href="https://www.soccernews.com/manchester-united-target-left-back-reinforcement-in-january/407306/">Manchester United target left-back reinforcement in January</a> appeared first on <a href="https://www.soccernews.com">SoccerNews</a>.</p></div>
+</article>
+<article class="article-card" id="artikel-1311">
+    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Le ultime dal Milan. Il CorSport: \"Gila e Rabiot dall'inizio. Moreira dopo\"", "image": ["https://net-storage-auto.tcccdn.com/storage/milannews.it/img_notizie/thumb3/07/07397d628fe225919b1917a738e721ff-57905-oooz0000.jpeg"], "datePublished": "2026-10-31T10:24:27+01:00", "dateModified": "2026-10-31T10:24:27+01:00", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-1311"}</script>
+    <h2>Le ultime dal Milan. Il CorSport: &quot;Gila e Rabiot dall&#x27;inizio. Moreira dopo&quot;</h2>
+    <div class="article-meta">
+        📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Other</strong> &nbsp;|&nbsp;
+        <a href="https://www.milannews.it/rassegna-stampa/ultime-milan-corsport-gila-rabiot-inizio-moreira-dopo-634604" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
+    </div>
+    <div class="article-body"><img src="https://net-storage-auto.tcccdn.com/storage/milannews.it/img_notizie/thumb3/07/07397d628fe225919b1917a738e721ff-57905-oooz0000.jpeg" alt="Le ultime dal Milan. Il CorSport: &quot;Gila e Rabiot dall&#x27;inizio. Moreira dopo&quot;" loading="lazy">Nel giorno dell'anti-vigilia del derby &egrave; arrivata una notizia che ha scaldato il cuore dei milanisti e fatto felice soprattutto Ruben Amorim: i recuperi di Mario Gila, Adrien Rabiot e Diego Moreira.</div>
+</article>
+<article class="article-card" id="artikel-2671">
+    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Wrexham player's Dad hits out after Sheffield United defeat - it causes a backlash", "image": ["https://static0.footballleagueworldimages.com/wordpress/wp-content/uploads/2026/10/copy-of-copy-of-copy-of-flw-fi-3000x1500-2026-10-31t095607-318.jpg"], "datePublished": "2026-10-31T10:23:59+00:00", "dateModified": "2026-10-31T10:23:59+00:00", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-2671"}</script>
+    <h2>Wrexham player&#x27;s Dad hits out after Sheffield United defeat - it causes a backlash</h2>
+    <div class="article-meta">
+        📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Other</strong> &nbsp;|&nbsp;
+        <a href="https://footballleagueworld.co.uk/wrexham-players-dad-hits-out-after-sheffield-united-defeat-it-causes-a-backlash/" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
+    </div>
+    <div class="article-body"><img src="https://static0.footballleagueworldimages.com/wordpress/wp-content/uploads/2026/10/copy-of-copy-of-copy-of-flw-fi-3000x1500-2026-10-31t095607-318.jpg" alt="Wrexham player&#x27;s Dad hits out after Sheffield United defeat - it causes a backlash" loading="lazy"><p><strong>Bailey Cadamarteri's father has reacted on social media to the latest Wrexham snub by Phil Parkinson since his arrival from Sheffield Wednesday, with it coming during the 1-0 defeat to Sheffield United.</strong></p></div>
 </article>
 <div style="text-align:center;margin:20px 0;">
     <script type="text/javascript">
@@ -166,182 +91,51 @@ Why are some of the president’s longtime allies distancing themselves from him
     <script type="text/javascript" src="https://upholdbrilliancerecast.com/f9e40eb3b3cd05f1038aac7b36b33ad2/invoke.js"></script>
 </div>
 
-<article class="article-card" id="artikel-878">
-    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Man United latest: Michael Carrick fights for future as Bruno Fernandes decision made for Chelsea trip", "image": ["https://static.independent.co.uk/2026/10/30/09/2026-10-29T170020Z_1847644998_RC2FAOALPYC0_RTRMADP_3_SOCCER-ENGLAND.JPG?width=1200&auto=webp&trim=63%2C0%2C63%2C0"], "datePublished": "2026-10-31T10:06:58+00:00", "dateModified": "2026-10-31T10:06:58+00:00", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-878"}</script>
-    <h2>Man United latest: Michael Carrick fights for future as Bruno Fernandes decision made for Chelsea trip</h2>
-    <div class="article-meta">
-        📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Other</strong> &nbsp;|&nbsp;
-        <a href="https://www.independent.co.uk/sport/football/man-utd-news-carrick-fernandes-chelsea-premier-league-b3075676.html" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
-    </div>
-    <div class="article-body"><img src="https://static.independent.co.uk/2026/10/30/09/2026-10-29T170020Z_1847644998_RC2FAOALPYC0_RTRMADP_3_SOCCER-ENGLAND.JPG?width=1200&amp;auto=webp&amp;trim=63%2C0%2C63%2C0" alt="Man United latest: Michael Carrick fights for future as Bruno Fernandes decision made for Chelsea trip" loading="lazy"><p>The Manchester United manager appeared on the brink of the sack at the start of the week but has been given another game to try and end their winless run </p></div>
-</article>
-<article class="article-card" id="artikel-829">
-    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Goodbye 'X-Men,' Patrick Stewart's Netflix Thriller Is Even Better", "image": ["https://static0.colliderimages.com/wordpress/wp-content/uploads/2022/03/Green-Room-Cropped.jpg"], "datePublished": "2026-10-31T10:03:12+00:00", "dateModified": "2026-10-31T10:03:12+00:00", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-829"}</script>
-    <h2>Goodbye &#x27;X-Men,&#x27; Patrick Stewart&#x27;s Netflix Thriller Is Even Better</h2>
-    <div class="article-meta">
-        📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Entertainment</strong> &nbsp;|&nbsp;
-        <a href="https://collider.com/patrick-stewart-green-room-x-men-streaming-netflix-november-2026/" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
-    </div>
-    <div class="article-body"><img src="https://static0.colliderimages.com/wordpress/wp-content/uploads/2022/03/Green-Room-Cropped.jpg" alt="Goodbye &#x27;X-Men,&#x27; Patrick Stewart&#x27;s Netflix Thriller Is Even Better" loading="lazy"><p>The death of<strong> Sir Patrick Stewart</strong> on October 29 released waves of grief among audiences across the world. Stewart passed <a href="https://collider.com/patrick-stewart-dead-at-86/">after a brief battle with Alzheimer's disease and Lewy body dementia</a> at age 86, according to his family. An icon on the stage and the screen, Stewart made a particularly seismic impact on sci-fi entertainment, bringing his Shakespearean training and natural authority to bear in roles that could have been made silly — from the <a href="http://collider.com/x-men"><em>X-Men</em> series</a> to <a href="https://collider.com/david-lynch-dune-blue-velvet/"><strong>David Lynch</strong>'s </a><em><a href="https://collider.com/david-lynch-dune-blue-velvet/">Dune</a></em>and, of course, as Capt. Picard on <a href="http://collider.com/tag/star-trek"><em><strong>Star Trek: The Next Generation</strong></em></a> and the films that followed.</p></div>
-</article>
-<article class="article-card" id="artikel-2942">
-    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Everton predicted lineup vs. Newcastle: Jack Grealish decision made after club discipline breach", "image": ["https://www.sportsmole.co.uk/thumbor/7_qO9bmPyY9WvK3tREiVK4ht-Bw=/1200x0/smart/filters:format(webp)/https%3A%2F%2Fsportsmole-media-prod.s3.gra.io.cloud.ovh.net%2Fuploads%2F2026%2F10%2Ficonsport-376709-0155-1-6ae5b55cbf637746035164.jpg"], "datePublished": "2026-10-31T10:02:41+00:00", "dateModified": "2026-10-31T10:02:41+00:00", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-2942"}</script>
-    <h2>Everton predicted lineup vs. Newcastle: Jack Grealish decision made after club discipline breach</h2>
-    <div class="article-meta">
-        📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Sports</strong> &nbsp;|&nbsp;
-        <a href="https://www.sportsmole.co.uk/football/everton/predicted-lineups/will-jack-be-back-predicted-everton-xi-vs-newcastle_608137.html" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
-    </div>
-    <div class="article-body"><img src="https://www.sportsmole.co.uk/thumbor/7_qO9bmPyY9WvK3tREiVK4ht-Bw=/1200x0/smart/filters:format(webp)/https%3A%2F%2Fsportsmole-media-prod.s3.gra.io.cloud.ovh.net%2Fuploads%2F2026%2F10%2Ficonsport-376709-0155-1-6ae5b55cbf637746035164.jpg" alt="Everton predicted lineup vs. Newcastle: Jack Grealish decision made after club discipline breach" loading="lazy">Sports Mole takes an in-depth look at how Everton could line up for Monday's Premier League clash with Newcastle United.</div>
-</article>
-<article class="article-card" id="artikel-1324">
-    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "C'è l'accordo, il derby Milan-Inter sarà visibile anche in chiaro! Ecco dove e come", "image": ["https://static.fcinter1908.it/202602/b175eb46b26c3c94d3304a95683d9055.png"], "datePublished": "2026-10-31T10:01:35+01:00", "dateModified": "2026-10-31T10:01:35+01:00", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-1324"}</script>
-    <h2>C&#x27;è l&#x27;accordo, il derby Milan-Inter sarà visibile anche in chiaro! Ecco dove e come</h2>
-    <div class="article-meta">
-        📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Other</strong> &nbsp;|&nbsp;
-        <a href="https://www.fcinter1908.it/partite/dove-vedere-le-partite/derby-milan-inter-visibile-chiaro-dove-come/" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
-    </div>
-    <div class="article-body"><img src="https://static.fcinter1908.it/202602/b175eb46b26c3c94d3304a95683d9055.png" alt="C&#x27;è l&#x27;accordo, il derby Milan-Inter sarà visibile anche in chiaro! Ecco dove e come" loading="lazy"><img alt="derby milan inter" src="https://static.fcinter1908.it/202602/b175eb46b26c3c94d3304a95683d9055.png">
-<p><strong>Il derby tra Milan e Inter diventa protagonista della notte di Halloween: si gioca sabato a San Siro alle ore 20.45</strong>. La sfida tra le due squadre sarà trasmessa anche in chiaro, c'è l'accordo. [caption id=&quot;attachment_2691990&quot; align=&quot;alignnone&quot; width=&quot;1199&quot;]<a href="https://static.fcinter1908.it/2026/10/Chivu-Venezia-Inter-23cb55615839.jpg"><img src="https://static.fcinter1908.it/2026/10/Chivu-Venezia-Inter-23cb55615839.jpg"></a> Getty Images[/caption] <strong>Dove e come? Nel Regno Unito su BBC Two, uno dei canali della televisione pubblica britannica</strong>. Per quanto riguarda la copertura in Italia, la partita sarà trasmessa contestualmente da DAZN e da Sky, essendo il derby uno dei big che le due emittenti si sono spartite a inizio stagione. [caption id=&quot;attachment_2692031&quot; align=&quot;alignnone&quot; width=&quot;1500&quot;]<a href="https://static.fcinter1908.it/2026/10/Inter-12567eaaab04.jpg"><img src="https://static.fcinter1908.it/2026/10/Inter-12567eaaab04.jpg"></a> Getty Images[/caption] Come evidenzia Calcio e Finanza, &quot;<em>la trasmissione della partita rientra nell’accordo firmato lo scorso agosto per la stagione 2026/27. L’intesa prevede la trasmissione nel Regno Unito di 38 partite di Serie A, tra dirette televisive e streaming, attraverso BBC ALBA e BBC Sport. Più precisamente BBC ALBA trasmetterà 19 partite di Serie A in diretta con telecronaca in gaelico e commento in inglese, mentre BBC Sport trasmette in streaming altre 19 partite in diretta su BBC iPlayer con commento in inglese.</em> [caption id=&quot;attachment_2691801&quot; align=&quot;alignnone&quot; width=&quot;1600&quot;]<a href="https://static.fcinter1908.it/2026/10/thuram-38cc03a19ac1.jpeg"><img src="https://static.fcinter1908.it/2026/10/thuram-38cc03a19ac1.jpeg"></a> Sky[/caption] <em>L’intesa si basa su un accordo che BBC ALBA aveva raggiunto nella seconda metà della scorsa stagione per trasmettere in diretta le partite che vedevano protagonisti i giocatori della nazionale scozzese, in vista del ritorno della nazionale sul palcoscenico dei Mondiali. La copertura per la stagione 2026/27 è iniziata domenica 23 agosto 2026, quando BBC ALBA ha trasmesso Atalanta-Sassuolo, partita valida per la prima giornata che finì 2-1 per la squadra bergamasca.</em> <em>Il derby tra Milan e Inter rappresenta uno degli appuntamenti più importanti del calendario e avrà quindi spazio anche sulla televisione pubblica britannica. <strong>La diretta sarà disponibile gratuitamente per il pubblico del Regno Unito, senza la necessità di un abbonamento a una piattaforma sportiva a pagamento&quot;</strong></em>, si legge.</p></div>
-</article>
-<article class="article-card" id="artikel-838">
-    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Star Wars' Secret Writers Quietly Made the Strangest, Scariest Zombie Movies of All Time", "image": ["https://static0.polygonimages.com/wordpress/wp-content/uploads/2026/10/heroimage_messiahofevil.jpg"], "datePublished": "2026-10-31T10:01:20+00:00", "dateModified": "2026-10-31T10:01:20+00:00", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-838"}</script>
-    <h2>Star Wars&#x27; Secret Writers Quietly Made the Strangest, Scariest Zombie Movies of All Time</h2>
-    <div class="article-meta">
-        📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Entertainment</strong> &nbsp;|&nbsp;
-        <a href="https://www.polygon.com/messiah-of-evil/" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
-    </div>
-    <div class="article-body"><img src="https://static0.polygonimages.com/wordpress/wp-content/uploads/2026/10/heroimage_messiahofevil.jpg" alt="Star Wars&#x27; Secret Writers Quietly Made the Strangest, Scariest Zombie Movies of All Time" loading="lazy"><p>Besides the occasional <a href="https://www.reddit.com/r/LucidDreaming/comments/13txkc/why_does_everyone_see_the_same_black_shadowy/">shadow person</a> who creeps into my room once a fortnight, nothing paralyzes me quite like deciding what to watch on Oct. 31. In my mind, Halloween is a horror movie marathon month where veering in and out of subgenres and quality metrics is highly encouraged. So how do you close it out on actual Halloween?</p></div>
-</article>
-<div style="text-align:center;margin:20px 0;">
-    <script type="text/javascript">
-        atOptions = {
-            'key' : 'f9e40eb3b3cd05f1038aac7b36b33ad2',
-            'format' : 'iframe',
-            'height' : 90,
-            'width' : 728,
-            'params' : {}
-        };
-    </script>
-    <script type="text/javascript" src="https://upholdbrilliancerecast.com/f9e40eb3b3cd05f1038aac7b36b33ad2/invoke.js"></script>
-</div>
-
-<article class="article-card" id="artikel-1325">
-    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Handanovic: “Che errore ho commesso durante Inter-Barcellona 4-3\"", "image": ["https://static.fcinter1908.it/202206/7254a3b76dcc76f381788aad92d427fd-scaled.jpg"], "datePublished": "2026-10-31T10:00:29+01:00", "dateModified": "2026-10-31T10:00:29+01:00", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-1325"}</script>
-    <h2>Handanovic: “Che errore ho commesso durante Inter-Barcellona 4-3&quot;</h2>
-    <div class="article-meta">
-        📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Other</strong> &nbsp;|&nbsp;
-        <a href="https://www.fcinter1908.it/news/interviste/handanovic-inter-barcellona-4-3-uscito-prima-rimonta/" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
-    </div>
-    <div class="article-body"><img src="https://static.fcinter1908.it/202206/7254a3b76dcc76f381788aad92d427fd-scaled.jpg" alt="Handanovic: “Che errore ho commesso durante Inter-Barcellona 4-3&quot;" loading="lazy"><img alt="Handanovic" src="https://static.fcinter1908.it/202206/7254a3b76dcc76f381788aad92d427fd-scaled.jpg">
-<p><strong>Samir Handanovic era a San Siro la sera dell'incredibile Inter-Barcellona 4-3. Ma l'ex portiere nerazzurro ha lasciato lo stadio prima della fine della partita.</strong> E si è perso proprio uno dei momenti più emozionanti della storia recente dell'Inter. <strong>Scegli Fcinter1908.it come tuo sito preferito su Google:</strong> <a href="https://www.google.com/preferences/source?q=fcinter1908.it">**clicca qui</a></p>
-<p>Handanovic ha raccontato l'episodio a Repubblica, parlando del suo rapporto con lo stadio e del modo in cui preferisce seguire le partite. <a href="https://static.fcinter1908.it/202406/68a90683cfeb316f4230a7824042b584.jpg"><img src="https://static.fcinter1908.it/202406/68a90683cfeb316f4230a7824042b584-1024x573.jpg"></a>### Handanovic: «Inter-Barcellona? Sono uscito prima. Cosa mi sono perso...»</p>
-<p>Alla domanda se sarebbe stato presente a San Siro per il derby contro il Milan, l'ex capitano dell'Inter ha risposto: «Non credo, davanti alla tv mi concentro di più. Certo, allo stadio le emozioni sono diverse». [caption id=&quot;attachment_2141238&quot; align=&quot;alignnone&quot; width=&quot;1024&quot;]<a href="https://static.fcinter1908.it/202307/3d7b001fb907020953faf72ff959145c.jpg"><img src="https://static.fcinter1908.it/202307/3d7b001fb907020953faf72ff959145c-1024x576.jpg"></a> Getty Images[/caption] Poi il ricordo della semifinale di Champions League del 6 maggio 2025, quella che i tifosi nerazzurri difficilmente dimenticheranno. <strong>«Ero in tribuna alla semifinale di Champions con il Barcellona, ma sono uscito prima. Cosa mi sono perso...».</strong></p></div>
-</article>
-<article class="article-card" id="artikel-1150">
-    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Behind-the-scenes meeting designed to fix West Ham’s ‘nasty little habit’ revealed", "image": ["https://www.claretandhugh.info/wp-content/uploads/bowen-captain-1024x772.png"], "datePublished": "2026-10-31T10:00:29+00:00", "dateModified": "2026-10-31T10:00:29+00:00", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-1150"}</script>
-    <h2>Behind-the-scenes meeting designed to fix West Ham’s ‘nasty little habit’ revealed</h2>
-    <div class="article-meta">
-        📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Other</strong> &nbsp;|&nbsp;
-        <a href="https://www.claretandhugh.info/behind-the-scenes-meeting-designed-to-fix-west-hams-nasty-little-habit-revealed/" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
-    </div>
-    <div class="article-body"><img src="https://www.claretandhugh.info/wp-content/uploads/bowen-captain-1024x772.png" alt="Behind-the-scenes meeting designed to fix West Ham’s ‘nasty little habit’ revealed" loading="lazy"><p>It&#8217;s the problem occupying every fans&#8217; mind this morning as<a href="https://www.claretandhugh.info/west-ham-v-west-brom-preview-predicted-xi-for-game-nuno-dare-not-lose/"> West Ham</a> prepare to do battle with West Bromwich Albion.</p>
-<p>Despite dropping points thanks to their seasons&#8217; worst first half  last weekend, the Irons can still go top if results go their way but they <em>must fix their now-customary lethargic slow start.</em></p>
-<p>The media has been hyper critical of it. Nuno based his press conference around it.</p>
-
-<img alt="Nuno Espírito Santo watches West Ham during their 3-2 Championship defeat to Southampton." src="https://www.claretandhugh.info/wp-content/uploads/Nuno-Espiritio-Santo-Pedro-Silva-1024x576.webp"><p>Espirito Santo and the West Ham team have been specifically working on those slow starts &#8211; and they&#8217;ll be judged again this afternoon</p>
-<p>And now West Ham&#8217;s skipper has revealed that as part of their preparation this week there have been specific discussions about exactly <em>what West Ham&#8217;s team needs to do</em> to put an end to the lethargic starts which have seen them go behind nine times this season: (whufc.com)</p>
-<h2>&#8220;We know we can’t afford to start games slowly and the Head Coach sat us down and talked about that this week&#8221;</h2>
-<p><em>&#8230;We know we have to be better at both ends of the pitch &#8211; to defend better, to attack better, to control the game better&#8230;.We’ve got three games to play before the final international break of the year, and we want to get on a fresh unbeaten run going into it, starting with a win on Saturday.”</em></p>
-<p>With Middlesborough taking on Charlton Athletic this afternoon, West Ham will be hoping their south London neighbours can steal some points off the league leaders as the Irons attempt to close the three point gap.</p>
-<p>Fans will judge for themselves how effective Nuno&#8217;s discussion with his players has been by reflecting on the half time score: West Ham would be running away with the league based on second half performances alone, so it is surely time to start on the front foot instead of continuing with their infuriating nasty little habit of ceding the advantage to the visitors.</p>
-
-<p><a href="https://www.claretandhugh.info/behind-the-scenes-meeting-designed-to-fix-west-hams-nasty-little-habit-revealed/">Source</a></p></div>
-</article>
-<article class="article-card" id="artikel-799">
-    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "The Witcher: No Man's Land Officially Unveiled", "image": ["https://static0.srcdn.com/wordpress/wp-content/uploads/2026/10/ss_3a3f430982cc3bccac1633d3ea60a30bf3d1ae9e-1920x1080.jpg"], "datePublished": "2026-10-31T10:00:18+00:00", "dateModified": "2026-10-31T10:00:18+00:00", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-799"}</script>
-    <h2>The Witcher: No Man&#x27;s Land Officially Unveiled</h2>
-    <div class="article-meta">
-        📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Other</strong> &nbsp;|&nbsp;
-        <a href="https://screenrant.com/witcher-no-mans-land-2026-fall-release/" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
-    </div>
-    <div class="article-body"><img src="https://static0.srcdn.com/wordpress/wp-content/uploads/2026/10/ss_3a3f430982cc3bccac1633d3ea60a30bf3d1ae9e-1920x1080.jpg" alt="The Witcher: No Man&#x27;s Land Officially Unveiled" loading="lazy"><p>The Witcher universe may have begun back in 1993 with the publication of <em>The Last Wish </em>by author Andrzej Sapkowski, but there is no denying that it kicked off in earnest following the success of 2015's <em><a href="https://screenrant.com/tag/the-witcher-3/"><strong>The Witcher 3: Wild Hunt</strong></a>. </em>Going on to meet both commercial and critical success, and still sitting on an 8.6 User Score on Metacritic to this day, it is regarded as one of the greatest video games of all time, and a worthy sequel to its previous installments developed by CD Projekt RED.</p></div>
-</article>
-<article class="article-card" id="artikel-798">
-    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Lost Showrunner's New Netflix Series Can Save A Franchise", "image": ["https://static0.srcdn.com/wordpress/wp-content/uploads/2026/10/morgan-spector-in-the-gilded-age-season-1-episode-2.jpg"], "datePublished": "2026-10-31T10:00:18+00:00", "dateModified": "2026-10-31T10:00:18+00:00", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-798"}</script>
-    <h2>Lost Showrunner&#x27;s New Netflix Series Can Save A Franchise</h2>
-    <div class="article-meta">
-        📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Entertainment</strong> &nbsp;|&nbsp;
-        <a href="https://screenrant.com/netflix-dan-brown-robert-langdon-the-secret-of-secrets-save-franchise/" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
-    </div>
-    <div class="article-body"><img src="https://static0.srcdn.com/wordpress/wp-content/uploads/2026/10/morgan-spector-in-the-gilded-age-season-1-episode-2.jpg" alt="Lost Showrunner&#x27;s New Netflix Series Can Save A Franchise" loading="lazy"><p><em>Lost</em> co-showrunner, executive producer, and writer Carlton Cuse's new Netflix series is a major franchise's last chance to prove itself. Cuse is one of the most influential people in Hollywood, a genre-blending pioneer whose most recent credits include not just <em>Lost</em>, but also the <em>Psycho</em> prequel <em>Bates Motel</em>, Guillermo del Toro's vampire drama <em>The Strain</em>, <em>Tom Clancy's Jack Ryan</em>, and Netflix's three-season fantasy adventure <em>Locke &amp; Key</em>. Now Cuse is back at Netflix, taking on one of his most daring and precarious projects yet.</p></div>
-</article>
-<article class="article-card" id="artikel-830">
-    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Anya Taylor-Joy's R-Rated 'Vikings' Replacement Officially Conquers Streaming", "image": ["https://static0.colliderimages.com/wordpress/wp-content/uploads/2024/05/anya-taylor-joy-as-olga-in-the-northman.jpg"], "datePublished": "2026-10-31T10:00:12+00:00", "dateModified": "2026-10-31T10:00:12+00:00", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-830"}</script>
-    <h2>Anya Taylor-Joy&#x27;s R-Rated &#x27;Vikings&#x27; Replacement Officially Conquers Streaming</h2>
-    <div class="article-meta">
-        📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Entertainment</strong> &nbsp;|&nbsp;
-        <a href="https://collider.com/anya-taylor-joy-the-northman-streaming-success-prime-video-apple-tv-october-2026/" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
-    </div>
-    <div class="article-body"><img src="https://static0.colliderimages.com/wordpress/wp-content/uploads/2024/05/anya-taylor-joy-as-olga-in-the-northman.jpg" alt="Anya Taylor-Joy&#x27;s R-Rated &#x27;Vikings&#x27; Replacement Officially Conquers Streaming" loading="lazy"><p>Few stars have had as much to do this year as <a href="https://collider.com/tag/anya-taylor-joy/"><strong>Anya Taylor-Joy</strong></a>, who has headlined some of the biggest movies in theaters as well as some of the most-watched TV shows on streaming. For her opening act in 2026, Taylor-Joy reprised her role as Princess Peach in <a href="https://collider.com/tag/movie/super-mario-world/"><em><strong>The Super Mario Galaxy Movie</strong></em></a>, which was the first feature film of 2026 to hit $1 billion at the global box office. She then returned to Apple TV to star in one of the best crime thriller shows of the year, <a href="https://collider.com/tag/tv-show/lucky-2026/"><em><strong>Lucky</strong></em></a>, alongside <strong>Timothy Olyphant</strong> — part of what made ATJ’s return to Apple TV so exciting is that she previously starred in <em><strong>The Gorge</strong></em> for the platform. She’ll finish the year by headlining <a href="https://collider.com/tag/movie/dune-part-three/"><em><strong>Dune: Part Three</strong></em></a> alongside <strong>Timothée Chalamet</strong>, but she can also be seen starring opposite <a href="https://collider.com/tag/chris-evans/"><strong>Chris Evans</strong></a> in <em><strong>Sacrifice</strong></em> on Netflix.</p></div>
-</article>
-<div style="text-align:center;margin:20px 0;">
-    <script type="text/javascript">
-        atOptions = {
-            'key' : 'f9e40eb3b3cd05f1038aac7b36b33ad2',
-            'format' : 'iframe',
-            'height' : 90,
-            'width' : 728,
-            'params' : {}
-        };
-    </script>
-    <script type="text/javascript" src="https://upholdbrilliancerecast.com/f9e40eb3b3cd05f1038aac7b36b33ad2/invoke.js"></script>
-</div>
-
-<article class="article-card" id="artikel-121">
-    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "The Wild World of Third-Party AI Apps for Ring Security, and Whether You Need Them", "image": ["https://www.cnet.com/wp-content/uploads/sites/2/Ring-Spotlight-2nd-Gen-Main.jpg"], "datePublished": "2026-10-31T10:00:00Z", "dateModified": "2026-10-31T10:00:00Z", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-121"}</script>
-    <h2>The Wild World of Third-Party AI Apps for Ring Security, and Whether You Need Them</h2>
+<article class="article-card" id="artikel-1693">
+    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Nvidia in talks to guarantee debt for Nscale’s Anthropic data centre", "image": ["https://media.thenextweb.com/2026/10/jensen-huang-fortune-global-forum-2022-interview.avif"], "datePublished": "2026-10-31T10:23:26+00:00", "dateModified": "2026-10-31T10:23:26+00:00", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-1693"}</script>
+    <h2>Nvidia in talks to guarantee debt for Nscale’s Anthropic data centre</h2>
     <div class="article-meta">
         📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Technology</strong> &nbsp;|&nbsp;
-        <a href="https://www.cnet.com/home/security/ring-ai-app-store-third-parties-analysis-do-you-need-them/" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
+        <a href="https://thenextweb.com/news/nvidia-nscale-anthropic-data-centre-debt-guarantee" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
     </div>
-    <div class="article-body"><img src="https://www.cnet.com/wp-content/uploads/sites/2/Ring-Spotlight-2nd-Gen-Main.jpg" alt="The Wild World of Third-Party AI Apps for Ring Security, and Whether You Need Them" loading="lazy">Ring cameras offer broad capabilities, but third-party AI tools give HOAs, landlords and others even more ways to use them.</div>
+    <div class="article-body"><img src="https://media.thenextweb.com/2026/10/jensen-huang-fortune-global-forum-2022-interview.avif" alt="Nvidia in talks to guarantee debt for Nscale’s Anthropic data centre" loading="lazy"><img src="https://media.thenextweb.com/2026/10/jensen-huang-fortune-global-forum-2022-interview.avif"><br><p>Nvidia is in talks to guarantee billions of dollars of debt for Nscale, the UK AI cloud company. The money would build a West Virginia data centre that Anthropic plans to use. Phoebe Liu first reported the talks for The Information on Thursday 29 October. The deal is not signed, and its terms could still [&hellip;]</p>
+<br><br><a href="https://thenextweb.com/news/nvidia-nscale-anthropic-data-centre-debt-guarantee?utm_source=social&amp;utm_medium=feed&amp;utm_campaign=profeed">This story continues</a> at The Next Web</div>
 </article>
-<article class="article-card" id="artikel-1313">
-    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Dopo Pulisic è il turno dei rinnovi di Rabiot e Cisse", "image": ["https://net-storage-auto.tcccdn.com/storage/milannews.it/img_notizie/thumb3/c1/c1f105f63ab30c36f6ca130e5e6d827d-30577-oooz0000.jpeg"], "datePublished": "2026-10-31T10:00:00+01:00", "dateModified": "2026-10-31T10:00:00+01:00", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-1313"}</script>
-    <h2>Dopo Pulisic è il turno dei rinnovi di Rabiot e Cisse</h2>
+<article class="article-card" id="artikel-1295">
+    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Fiorentina a lavoro in vista della gara con il Sassuolo: timido ottimismo per il recupero di Ranieri", "image": ["https://tmw-storage-auto.tcccdn.com/storage/tuttomercatoweb.com/img_notizie/thumb3/3a/3ab60bb617f9fc0377ec24f089686ac5-07178-oooz0000.jpeg"], "datePublished": "2026-10-31T10:23:07+01:00", "dateModified": "2026-10-31T10:23:07+01:00", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-1295"}</script>
+    <h2>Fiorentina a lavoro in vista della gara con il Sassuolo: timido ottimismo per il recupero di Ranieri</h2>
     <div class="article-meta">
         📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Other</strong> &nbsp;|&nbsp;
-        <a href="https://www.milannews.it/calciomercato-milan/pulisic-turno-rinnovi-rabiot-cisse-634621" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
+        <a href="https://www.tuttomercatoweb.com/serie-a/fiorentina-lavoro-vista-gara-sassuolo-timido-ottimismo-recupero-ranieri-2289118" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
     </div>
-    <div class="article-body"><img src="https://net-storage-auto.tcccdn.com/storage/milannews.it/img_notizie/thumb3/c1/c1f105f63ab30c36f6ca130e5e6d827d-30577-oooz0000.jpeg" alt="Dopo Pulisic è il turno dei rinnovi di Rabiot e Cisse" loading="lazy">Nel corso del consueto appuntamento con il suo editoriale per TMW, Niccol&ograve; Ceccarini ha fatto il punto sul calciomercato del Milan, soffermandosi in modo particolare sui rinnovi di contratto, argomenti all'ordine del giorno dalle parti di  ...</div>
+    <div class="article-body"><img src="https://tmw-storage-auto.tcccdn.com/storage/tuttomercatoweb.com/img_notizie/thumb3/3a/3ab60bb617f9fc0377ec24f089686ac5-07178-oooz0000.jpeg" alt="Fiorentina a lavoro in vista della gara con il Sassuolo: timido ottimismo per il recupero di Ranieri" loading="lazy">Riparte oggi la preparazione della Fiorentina in vista della sfida di lunedì pomeriggio, quando alle 18.</div>
 </article>
-<article class="article-card" id="artikel-1127">
-    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Dominik Szoboszlai: Confirmed Liverpool news could upset Florian Wirtz", "image": ["https://media.assettype.com/footballinsider247/2026-10-27/574bhqlz/Andoni-Iraola-Dominik-Szoboszlai.jpg"], "datePublished": "2026-10-31T10:00:00+00:00", "dateModified": "2026-10-31T10:00:00+00:00", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-1127"}</script>
-    <h2>Dominik Szoboszlai: Confirmed Liverpool news could upset Florian Wirtz</h2>
+<article class="article-card" id="artikel-220">
+    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Powering the Agent Development Lifecycle with any framework, from ADK to LangChain and beyond", "image": [], "datePublished": "2026-10-31T10:22:20.879208", "dateModified": "2026-10-31T10:22:20.879208", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-220"}</script>
+    <h2>Powering the Agent Development Lifecycle with any framework, from ADK to LangChain and beyond</h2>
     <div class="article-meta">
-        📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Other</strong> &nbsp;|&nbsp;
-        <a href="https://www.footballinsider247.com/liverpool/dominik-szoboszlai-verdict-confirmed-liverpool-news-could-upset-florian-wirtz" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
+        📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Technology</strong> &nbsp;|&nbsp;
+        <a href="https://developers.googleblog.com/powering-the-agent-development-lifecycle-with-any-framework-from-adk-to-langchain-and-beyond/" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
     </div>
-    <div class="article-body"><img src="https://media.assettype.com/footballinsider247/2026-10-27/574bhqlz/Andoni-Iraola-Dominik-Szoboszlai.jpg" alt="Dominik Szoboszlai: Confirmed Liverpool news could upset Florian Wirtz" loading="lazy">Andoni Iraola on the sidelines at Liverpool, with Dominik Szoboszlai in action</div>
+    <div class="article-body">The Agents CLI Extension System enables developers to use frameworks like LangChain, LangGraph, or custom enterprise stacks while retaining a unified deployment and evaluation workflow. It details a first-party LangChain template that scaffolds, runs, and deploys agents without requiring the Agent Development Kit (ADK). Additionally, it demonstrates how platform teams can author custom extensions to enforce policies such as automated software bill of materials (SBOM) scans during deployment.</div>
 </article>
-<article class="article-card" id="artikel-1126">
-    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Sources: Crystal Palace could accept new Jean-Philippe Mateta offer", "image": ["https://media.assettype.com/footballinsider247/2026-10-04/lio2kqgy/Jean-Philippe-Mateta-Pierre-Sage.jpg"], "datePublished": "2026-10-31T10:00:00+00:00", "dateModified": "2026-10-31T10:00:00+00:00", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-1126"}</script>
-    <h2>Sources: Crystal Palace could accept new Jean-Philippe Mateta offer</h2>
+<article class="article-card" id="artikel-219">
+    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Streaming comes to API Gateway: real-time and AI-ready APIs, without changing your spec", "image": [], "datePublished": "2026-10-31T10:22:20.857896", "dateModified": "2026-10-31T10:22:20.857896", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-219"}</script>
+    <h2>Streaming comes to API Gateway: real-time and AI-ready APIs, without changing your spec</h2>
     <div class="article-meta">
-        📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Other</strong> &nbsp;|&nbsp;
-        <a href="https://www.footballinsider247.com/crystal-palace-fc/sources-crystal-palace-could-accept-new-jean-philippe-mateta-offer" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
+        📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Technology</strong> &nbsp;|&nbsp;
+        <a href="https://developers.googleblog.com/streaming-comes-to-api-gateway-real-time-and-ai-ready-apis-without-changing-your-spec/" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
     </div>
-    <div class="article-body"><img src="https://media.assettype.com/footballinsider247/2026-10-04/lio2kqgy/Jean-Philippe-Mateta-Pierre-Sage.jpg" alt="Sources: Crystal Palace could accept new Jean-Philippe Mateta offer" loading="lazy">Jean-Philippe Mateta in action for Crystal Palace, with Pierre Sage in a circular inset</div>
+    <div class="article-body">API Gateway now supports real-time streaming—including Server-Sent Events, WebSockets, gRPC, and chunked transfer encoding—in Public Preview without requiring changes to your existing API specifications. This update allows developers to route long-lived, bi-directional streams and AI workloads directly through the gateway while maintaining consistent authentication, rate limiting, and observability. Additionally, gateways now feature deterministic default hostnames, simplifying environment provisioning and infrastructure-as-code management.</div>
 </article>
-<article class="article-card" id="artikel-988">
-    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "These Stars’ Supernatural Experiences Will Give You the Chills", "image": ["https://akns-images.eonline.com/eol_images/Entire_Site/20261026/b493aa02-09ec-4e28-a14c-baa8dc7e676c_1793040470.jpg"], "datePublished": "2026-10-31T10:00:00+00:00", "dateModified": "2026-10-31T10:00:00+00:00", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-988"}</script>
-    <h2>These Stars’ Supernatural Experiences Will Give You the Chills</h2>
+<article class="article-card" id="artikel-218">
+    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Architecting Governed, Self-Evolving AI Agents on Google Cloud", "image": [], "datePublished": "2026-10-31T10:22:20.847556", "dateModified": "2026-10-31T10:22:20.847556", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-218"}</script>
+    <h2>Architecting Governed, Self-Evolving AI Agents on Google Cloud</h2>
     <div class="article-meta">
-        📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Other</strong> &nbsp;|&nbsp;
-        <a href="https://www.eonline.com/news/1408846/demi-lovato-jennifer-aniston-and-more-stars-detail-supernatural-experiences-thatll-give-you-the-chills?cmpid=rss-syndicate-genericrss-us-top_stories" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
+        📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Technology</strong> &nbsp;|&nbsp;
+        <a href="https://developers.googleblog.com/architecting-governed-self-evolving-ai-agents-on-gemini-agent-platform/" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
     </div>
-    <div class="article-body"><img src="https://akns-images.eonline.com/eol_images/Entire_Site/20261026/b493aa02-09ec-4e28-a14c-baa8dc7e676c_1793040470.jpg" alt="These Stars’ Supernatural Experiences Will Give You the Chills" loading="lazy"><img alt="Demi Lovato, Jennifer Aniston" src="https://akns-images.eonline.com/eol_images/Entire_Site/20261026/b493aa02-09ec-4e28-a14c-baa8dc7e676c_1793040470.jpg?fit=around|660:660">Telling ghost stories is one thing. But starring in your own? That’s another.
-Over the years, several celebrities have shared their supernatural experiences. Take Jessica Chastain, for instance,...<br></div>
+    <div class="article-body">Learn how Project Chrysalis combines Google Cloud's Gemini Enterprise Agent Platform, Agent Development Kit (ADK), BigQuery, and a four-gate defense-in-depth security stack (Model Armor, Cloud KMS, Binary Authorization, and OPA) to build governed, self-evolving AI agents that remediate live production outages in 1.8 seconds.</div>
 </article>
 <div style="text-align:center;margin:20px 0;">
     <script type="text/javascript">
@@ -355,5 +149,121 @@ Over the years, several celebrities have shared their supernatural experiences. 
     </script>
     <script type="text/javascript" src="https://upholdbrilliancerecast.com/f9e40eb3b3cd05f1038aac7b36b33ad2/invoke.js"></script>
 </div>
-<div class="pagination"><a href="index.html">1</a><a href="page2.html">2</a><a href="page3.html">3</a><a href="page4.html">4</a><a href="page5.html">5</a><a href="page6.html">6</a><a href="page7.html">7</a><a href="page8.html">8</a><a href="page9.html" class="active">9</a><a href="page10.html">10</a><a href="page11.html">11</a><a href="page12.html">12</a><a href="page13.html">13</a><a href="page14.html">14</a><a href="page15.html">15</a><a href="page16.html">16</a><a href="page17.html">17</a><a href="page18.html">18</a><a href="page19.html">19</a><a href="page20.html">20</a><a href="page21.html">21</a><a href="page22.html">22</a><a href="page23.html">23</a><a href="page24.html">24</a><a href="page25.html">25</a><a href="page26.html">26</a><a href="page27.html">27</a><a href="page28.html">28</a><a href="page29.html">29</a><a href="page30.html">30</a><a href="page31.html">31</a><a href="page32.html">32</a><a href="page33.html">33</a><a href="page34.html">34</a><a href="page35.html">35</a><a href="page36.html">36</a><a href="page37.html">37</a><a href="page38.html">38</a><a href="page39.html">39</a><a href="page40.html">40</a><a href="page41.html">41</a><a href="page42.html">42</a><a href="page43.html">43</a><a href="page44.html">44</a><a href="page45.html">45</a><a href="page46.html">46</a><a href="page47.html">47</a><a href="page48.html">48</a><a href="page49.html">49</a><a href="page50.html">50</a><a href="page51.html">51</a><a href="page52.html">52</a><a href="page53.html">53</a><a href="page54.html">54</a><a href="page55.html">55</a><a href="page56.html">56</a><a href="page57.html">57</a><a href="page58.html">58</a><a href="page59.html">59</a><a href="page60.html">60</a><a href="page61.html">61</a><a href="page62.html">62</a><a href="page63.html">63</a><a href="page64.html">64</a><a href="page65.html">65</a><a href="page66.html">66</a><a href="page67.html">67</a><a href="page68.html">68</a><a href="page69.html">69</a><a href="page70.html">70</a><a href="page71.html">71</a><a href="page72.html">72</a><a href="page73.html">73</a><a href="page74.html">74</a><a href="page75.html">75</a><a href="page76.html">76</a><a href="page77.html">77</a><a href="page78.html">78</a><a href="page79.html">79</a><a href="page80.html">80</a><a href="page81.html">81</a><a href="page82.html">82</a><a href="page83.html">83</a></div><footer>&copy; 2026 News Portal Indonesia. All rights reserved.</footer>
+
+<article class="article-card" id="artikel-217">
+    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Preview, edit, and collaborate on markdown (.md) files natively in Google Docs and Drive", "image": [], "datePublished": "2026-10-31T10:22:20.836742", "dateModified": "2026-10-31T10:22:20.836742", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-217"}</script>
+    <h2>Preview, edit, and collaborate on markdown (.md) files natively in Google Docs and Drive</h2>
+    <div class="article-meta">
+        📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Technology</strong> &nbsp;|&nbsp;
+        <a href="https://developers.googleblog.com/preview-edit-and-collaborate-on-markdown-md-files-natively-in-google-docs-and-drive/" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
+    </div>
+    <div class="article-body">Google Workspace now offers native support for Markdown (.md) files, allowing developers and AI agents to seamlessly collaborate on documentation directly in Google Docs without manual file conversions. This integration preserves native file fidelity for use with Git repositories and developer tools while unlocking standard Docs features like line-level commenting, rendered Drive previews, and tracked version history.</div>
+</article>
+<article class="article-card" id="artikel-216">
+    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Building Conversational Commerce with Multi-Agent Swarms on GCP: A Working Prototype", "image": [], "datePublished": "2026-10-31T10:22:20.787578", "dateModified": "2026-10-31T10:22:20.787578", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-216"}</script>
+    <h2>Building Conversational Commerce with Multi-Agent Swarms on GCP: A Working Prototype</h2>
+    <div class="article-meta">
+        📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Technology</strong> &nbsp;|&nbsp;
+        <a href="https://developers.googleblog.com/building-conversational-commerce-with-multi-agent-swarms-on-gcp-a-working-prototype/" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
+    </div>
+    <div class="article-body">This document provides a publication template and metadata structure for a technical blog post focused on building Conversational User Interfaces (CUIs) using AI. It outlines key developer focus areas, product stacks, and approval workflows required for publishing technical content through Google Developer Studio. The framework helps engineers organize their guides and solutions to effectively share AI-driven conversational interface designs with the developer community.</div>
+</article>
+<article class="article-card" id="artikel-215">
+    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Fast, reliable A2UI, with swappable inference formats", "image": [], "datePublished": "2026-10-31T10:22:20.769401", "dateModified": "2026-10-31T10:22:20.769401", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-215"}</script>
+    <h2>Fast, reliable A2UI, with swappable inference formats</h2>
+    <div class="article-meta">
+        📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Other</strong> &nbsp;|&nbsp;
+        <a href="https://developers.googleblog.com/fast-reliable-a2ui/" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
+    </div>
+    <div class="article-body">A2UI now supports swappable inference formats, introducing A2UI Express which uses up to 3x fewer tokens and cuts latency by compiling compact Python-style syntax into standard A2UI JSON via Agent SDKs. Developers can also use controlled generation with TypeSafe's Jev system-decision models to render known-shape screens in under 300 ms while smaller models stream text. These updates require no changes to frontend renderers or component catalogs, offering flexible performance levers for generative UI development across Python, TypeScript, and Dart.</div>
+</article>
+<article class="article-card" id="artikel-214">
+    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Hill-Climbing Agent Quality with Agents CLI Evaluation", "image": [], "datePublished": "2026-10-31T10:22:20.757798", "dateModified": "2026-10-31T10:22:20.757798", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-214"}</script>
+    <h2>Hill-Climbing Agent Quality with Agents CLI Evaluation</h2>
+    <div class="article-meta">
+        📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Other</strong> &nbsp;|&nbsp;
+        <a href="https://developers.googleblog.com/hill-climbing-agent-quality-with-agents-cli-evaluation/" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
+    </div>
+    <div class="article-body">This post walks through the Agents CLI evaluation loop for systematically improving agent performance through continuous testing and grading. It demonstrates how to catch prompt regressions, evaluate model backend swaps using side-by-side trace comparisons, and automate evaluation passes. Developers will also learn how to integrate nightly scheduled runs with threshold-based alerting to track quality over time.</div>
+</article>
+<article class="article-card" id="artikel-213">
+    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Smaller apps and faster GPU inference with LiteRT in Google Play services", "image": [], "datePublished": "2026-10-31T10:22:20.740760", "dateModified": "2026-10-31T10:22:20.740760", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-213"}</script>
+    <h2>Smaller apps and faster GPU inference with LiteRT in Google Play services</h2>
+    <div class="article-meta">
+        📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Other</strong> &nbsp;|&nbsp;
+        <a href="https://developers.googleblog.com/smaller-apps-and-faster-gpu-inference-with-litert-in-google-play-services/" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
+    </div>
+    <div class="article-body">LiteRT in Google Play services now offers GPU inference powered by ML Drift, delivering about 1.4x faster performance alongside the new CompiledModel API. Switching from bundled binaries reduces app size by approximately 8 MB while enabling seamless, automatic runtime updates across billions of devices. Developers can easily adopt these updates by updating their dependencies and utilizing the new Android Studio LiteRT skill for automated migration.</div>
+</article>
+<div style="text-align:center;margin:20px 0;">
+    <script type="text/javascript">
+        atOptions = {
+            'key' : 'f9e40eb3b3cd05f1038aac7b36b33ad2',
+            'format' : 'iframe',
+            'height' : 90,
+            'width' : 728,
+            'params' : {}
+        };
+    </script>
+    <script type="text/javascript" src="https://upholdbrilliancerecast.com/f9e40eb3b3cd05f1038aac7b36b33ad2/invoke.js"></script>
+</div>
+
+<article class="article-card" id="artikel-212">
+    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Build Generative UI Apps with A2UI & CopilotKit Agents", "image": [], "datePublished": "2026-10-31T10:22:20.728630", "dateModified": "2026-10-31T10:22:20.728630", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-212"}</script>
+    <h2>Build Generative UI Apps with A2UI &amp; CopilotKit Agents</h2>
+    <div class="article-meta">
+        📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Other</strong> &nbsp;|&nbsp;
+        <a href="https://developers.googleblog.com/build-generative-ui-apps-with-a2ui-copilotkit-agents/" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
+    </div>
+    <div class="article-body">See Google A2Ui in action! Learn how to natively render agentic UIs across Langchain, AWS Strands, Microsoft agents, and Google ADK using CopilotKit SDKs for A2UI.</div>
+</article>
+<article class="article-card" id="artikel-211">
+    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "DevFest is back!", "image": [], "datePublished": "2026-10-31T10:22:20.717069", "dateModified": "2026-10-31T10:22:20.717069", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-211"}</script>
+    <h2>DevFest is back!</h2>
+    <div class="article-meta">
+        📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Technology</strong> &nbsp;|&nbsp;
+        <a href="https://developers.googleblog.com/devfest-is-back/" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
+    </div>
+    <div class="article-body">DevFest 2026 runs from October 1 to December 31, bringing together nearly a million developers across more than 800 global events centered on the agentic AI era. Under the theme "Build, Secure, Scale," participants gain hands-on experience with Google’s developer stack—including Gemini, Google AI Studio, Google Antigravity, and Web MCP—through live workshops and codelabs. The conference focuses on enabling developers to prototype rapidly, ensure secure and private deployments, and leverage production-ready infrastructure.</div>
+</article>
+<article class="article-card" id="artikel-35">
+    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Russian authorities detain suspect over St. Petersburg cafe blast", "image": ["https://cdn.cnn.com/cnnnext/dam/assets/230403122852-04-russia-cafe-explosion-super-169.jpg"], "datePublished": "2026-10-31T10:22:18.193248", "dateModified": "2026-10-31T10:22:18.193248", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-35"}</script>
+    <h2>Russian authorities detain suspect over St. Petersburg cafe blast</h2>
+    <div class="article-meta">
+        📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Other</strong> &nbsp;|&nbsp;
+        <a href="https://edition.cnn.com/webview/europe/live-news/russia-ukraine-war-news-04-03-23/index.html" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
+    </div>
+    <div class="article-body"><img src="https://cdn.cnn.com/cnnnext/dam/assets/230403122852-04-russia-cafe-explosion-super-169.jpg" alt="Russian authorities detain suspect over St. Petersburg cafe blast" loading="lazy"></div>
+</article>
+<article class="article-card" id="artikel-34">
+    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "READ: Trump indictment related to hush money payment", "image": ["https://cdn.cnn.com/cnnnext/dam/assets/230404123050-19-trump-arraignment-0404-super-169.jpg"], "datePublished": "2026-10-31T10:22:18.192806", "dateModified": "2026-10-31T10:22:18.192806", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-34"}</script>
+    <h2>READ: Trump indictment related to hush money payment</h2>
+    <div class="article-meta">
+        📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Other</strong> &nbsp;|&nbsp;
+        <a href="https://cnn.it/411KYN7" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
+    </div>
+    <div class="article-body"><img src="https://cdn.cnn.com/cnnnext/dam/assets/230404123050-19-trump-arraignment-0404-super-169.jpg" alt="READ: Trump indictment related to hush money payment" loading="lazy"></div>
+</article>
+<article class="article-card" id="artikel-31">
+    <script type="application/ld+json">{"@context": "https://schema.org", "@type": "NewsArticle", "headline": "Trump pleads not guilty to 34 felony counts", "image": ["https://cdn.cnn.com/cnnnext/dam/assets/230403164607-22-trump-indictment-travel-new-york-super-169.jpg"], "datePublished": "2026-10-31T10:22:18.172280", "dateModified": "2026-10-31T10:22:18.172280", "mainEntityOfPage": "https://thenewsday112.github.io/pyton/page9.html#artikel-31"}</script>
+    <h2>Trump pleads not guilty to 34 felony counts</h2>
+    <div class="article-meta">
+        📅 Oct 31, 2026 &nbsp;|&nbsp; Category: <strong>Other</strong> &nbsp;|&nbsp;
+        <a href="https://edition.cnn.com/webview/politics/live-news/trump-indictment-stormy-daniels-news-04-03-23/index.html" target="_blank" rel="nofollow noopener">Read Source &rarr;</a>
+    </div>
+    <div class="article-body"><img src="https://cdn.cnn.com/cnnnext/dam/assets/230403164607-22-trump-indictment-travel-new-york-super-169.jpg" alt="Trump pleads not guilty to 34 felony counts" loading="lazy"></div>
+</article>
+<div style="text-align:center;margin:20px 0;">
+    <script type="text/javascript">
+        atOptions = {
+            'key' : 'f9e40eb3b3cd05f1038aac7b36b33ad2',
+            'format' : 'iframe',
+            'height' : 90,
+            'width' : 728,
+            'params' : {}
+        };
+    </script>
+    <script type="text/javascript" src="https://upholdbrilliancerecast.com/f9e40eb3b3cd05f1038aac7b36b33ad2/invoke.js"></script>
+</div>
+<div class="pagination"><a href="index.html">1</a><a href="page2.html">2</a><a href="page3.html">3</a><a href="page4.html">4</a><a href="page5.html">5</a><a href="page6.html">6</a><a href="page7.html">7</a><a href="page8.html">8</a><a href="page9.html" class="active">9</a><a href="page10.html">10</a><a href="page11.html">11</a><a href="page12.html">12</a><a href="page13.html">13</a><a href="page14.html">14</a><a href="page15.html">15</a><a href="page16.html">16</a><a href="page17.html">17</a><a href="page18.html">18</a><a href="page19.html">19</a><a href="page20.html">20</a><a href="page21.html">21</a><a href="page22.html">22</a><a href="page23.html">23</a><a href="page24.html">24</a><a href="page25.html">25</a><a href="page26.html">26</a><a href="page27.html">27</a><a href="page28.html">28</a><a href="page29.html">29</a><a href="page30.html">30</a><a href="page31.html">31</a><a href="page32.html">32</a><a href="page33.html">33</a><a href="page34.html">34</a><a href="page35.html">35</a><a href="page36.html">36</a><a href="page37.html">37</a><a href="page38.html">38</a><a href="page39.html">39</a><a href="page40.html">40</a><a href="page41.html">41</a><a href="page42.html">42</a><a href="page43.html">43</a><a href="page44.html">44</a><a href="page45.html">45</a><a href="page46.html">46</a><a href="page47.html">47</a><a href="page48.html">48</a><a href="page49.html">49</a><a href="page50.html">50</a><a href="page51.html">51</a><a href="page52.html">52</a><a href="page53.html">53</a><a href="page54.html">54</a><a href="page55.html">55</a><a href="page56.html">56</a><a href="page57.html">57</a><a href="page58.html">58</a><a href="page59.html">59</a><a href="page60.html">60</a><a href="page61.html">61</a><a href="page62.html">62</a><a href="page63.html">63</a><a href="page64.html">64</a><a href="page65.html">65</a><a href="page66.html">66</a><a href="page67.html">67</a><a href="page68.html">68</a><a href="page69.html">69</a><a href="page70.html">70</a><a href="page71.html">71</a><a href="page72.html">72</a><a href="page73.html">73</a><a href="page74.html">74</a><a href="page75.html">75</a><a href="page76.html">76</a><a href="page77.html">77</a><a href="page78.html">78</a><a href="page79.html">79</a><a href="page80.html">80</a><a href="page81.html">81</a><a href="page82.html">82</a><a href="page83.html">83</a><a href="page84.html">84</a><a href="page85.html">85</a><a href="page86.html">86</a></div><footer>&copy; 2026 News Portal Indonesia. All rights reserved.</footer>
 </div></body></html>
